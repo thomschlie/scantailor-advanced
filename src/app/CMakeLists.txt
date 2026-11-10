@@ -104,3 +104,16 @@ if (BUILD_CLI)
       "$<TARGET_PROPERTY:TIFF::TIFF,INTERFACE_INCLUDE_DIRECTORIES>")
   install(TARGETS scantailor-cli RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 endif()
+
+# ── scantailor-gui-batch: test helper, drives MainWindow like a user (acceptance test
+#    "CLI output == GUI output" in scantailor-cli). Not installed. ──────────────────
+set(gui_batch_driver_sources ${gui_only_sources})
+list(REMOVE_ITEM gui_batch_driver_sources main.cpp)
+add_executable(
+    scantailor-gui-batch gui-batch-driver.cpp ${gui_batch_driver_sources} ${gui_only_ui_files}
+    ${resource_files})
+target_link_libraries(scantailor-gui-batch PRIVATE core ${Qt_Test_lib} ${EXTRA_LIBS})
+target_include_directories(
+    scantailor-gui-batch
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"
+    "$<TARGET_PROPERTY:TIFF::TIFF,INTERFACE_INCLUDE_DIRECTORIES>")
