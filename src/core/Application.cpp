@@ -8,11 +8,22 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFontDatabase>
+#include <QImageReader>
 #include <QTemporaryDir>
 
 #include "OutOfMemoryHandler.h"
 
 Application::Application(int& argc, char** argv) : QApplication(argc, argv), m_currentLocale("en") {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+  // Qt 6 refuses to decode images that need more than 256 MB (QImageReader's default
+  // allocation limit). A 600-dpi colour scan of an open book (e.g. 10015x7109 px, 285 MB)
+  // is above it: the page failed to load without a clear message, in the GUI and in batch.
+  // Scans are trusted local input and their size is the point; lift the limit unless the
+  // user set one with QT_IMAGEIO_MAXALLOC.
+  if (qEnvironmentVariableIsEmpty("QT_IMAGEIO_MAXALLOC")) {
+    QImageReader::setAllocationLimit(0);
+  }
+#endif
   initTranslations();
   initPortableVersion();
   loadFonts();
