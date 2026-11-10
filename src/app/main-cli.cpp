@@ -13,6 +13,9 @@
 #include <core/DefaultParams.h>
 #include <core/DefaultParamsProfileManager.h>
 #include <core/DefaultParamsProvider.h>
+#include "filters/output/ColorParams.h"
+
+#include "Dpi.h"
 
 #include <QCommandLineParser>
 #include <QDir>
@@ -77,6 +80,11 @@ int main(int argc, char* argv[]) {
                "Default parameters: a profile name saved in the GUI (\"Default\", \"Source\" or a user "
                "profile) or a path to a .stp file. Default: \"Default\".",
                "name|file"});
+  p.addOption({"color-mode",
+               "Output mode for pages without settings: bw, color (colour/greyscale) or mixed. "
+               "Default: from the profile (Default: bw).",
+               "mode"});
+  p.addOption({"output-dpi", "Output resolution for pages without settings. Default: from the profile.", "dpi"});
   p.addOption({"start-stage", "First stage to run (1-6). Default 1.", "n"});
   p.addOption({"end-stage", "Last stage to run (1-6). Default 6.", "n"});
   p.addOption({"source-dpi", "Resolution of the input images, overriding the files (images mode).", "dpi"});
@@ -123,6 +131,33 @@ int main(int argc, char* argv[]) {
     }
     if (!params) {
       return fail("cannot read profile: " + profile);
+    }
+    // Output options on top of the profile (again only for pages without settings).
+    if (p.isSet("color-mode") || p.isSet("output-dpi")) {
+      DefaultParams::OutputParams out = params->getOutputParams();
+      if (p.isSet("color-mode")) {
+        const QString m = p.value("color-mode");
+        output::ColorParams colorParams = out.getColorParams();
+        if (m == "bw") {
+          colorParams.setColorMode(output::BLACK_AND_WHITE);
+        } else if (m == "color") {
+          colorParams.setColorMode(output::COLOR_GRAYSCALE);
+        } else if (m == "mixed") {
+          colorParams.setColorMode(output::MIXED);
+        } else {
+          return fail("--color-mode is bw, color or mixed");
+        }
+        out.setColorParams(colorParams);
+      }
+      if (p.isSet("output-dpi")) {
+        const int dpi = p.value("output-dpi").toInt();
+        if (dpi <= 0) {
+          return fail("--output-dpi must be positive");
+        }
+        out.setDpi(Dpi(dpi, dpi));
+      }
+      params->setOutputParams(out);
+      name += "+cli";
     }
     DefaultParamsProvider::getInstance().setParams(std::move(params), name);
   }
