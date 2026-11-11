@@ -43,6 +43,9 @@ class BatchProcessor {
     int endFilter = 5;
     /** Pages processed in parallel within a stage. */
     int threads = 1;
+    // Layout toggles (select_content::layout::IncludeFlag) set on every page before stage 4;
+    // -1 = each page keeps its own.
+    int layoutInclude = -1;
 
     // Progress callbacks, optional. They are never called concurrently,
     // but may be called from worker threads.

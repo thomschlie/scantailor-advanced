@@ -3,6 +3,9 @@
 
 #include <filters/select_content/LayoutImage.h>
 #include <filters/select_content/LayoutRules.h>
+#include <filters/select_content/Params.h>
+
+#include <QDomDocument>
 
 #include <boost/test/unit_test.hpp>
 #include <cmath>
@@ -204,6 +207,153 @@ BOOST_AUTO_TEST_CASE(test_select_elements) {
   BOOST_CHECK((els[0].modelBox == dets[0].box));
   BOOST_CHECK(els[1].type == "page_number");
   BOOST_CHECK_EQUAL(els[1].box.y1, 1800);
+}
+
+// ---- final box (ml/apply_boxes.py): automatic box U included elements, paper-edge cut ----
+namespace {
+constexpr double kFrameDpi = 600;
+constexpr double kFramePxPerMm = kFrameDpi / 25.4;
+
+Element element(const char* type, Box box, double score = 0.9) {
+  return Element{type, type, score, box, box};
+}
+
+Detection detection(const char* raw, Box box, double score) {
+  return Detection{raw, "", "", score, box};
+}
+
+const Box kPage{0, 0, 3500, 5000};
+const Box kPaper{0, 0, 3500, 5000};
+}  // namespace
+
+BOOST_AUTO_TEST_CASE(test_include_list) {
+  QString error;
+  BOOST_CHECK_EQUAL(parseIncludeList("page-numbers,tabs", &error), kIncludePageNumbers | kIncludeTabs);
+  BOOST_CHECK(error.isEmpty());
+  BOOST_CHECK_EQUAL(parseIncludeList(" clean-edge , marginalia,headers", &error),
+                    kCleanPaperEdge | kIncludeMarginalia | kIncludeHeaders);
+  BOOST_CHECK_EQUAL(parseIncludeList("all", &error), kIncludeAll);
+  BOOST_CHECK_EQUAL(parseIncludeList("none", &error), 0u);
+  BOOST_CHECK(error.isEmpty());
+  BOOST_CHECK_EQUAL(parseIncludeList("tabs,footers", &error), 0u);
+  BOOST_CHECK(error.contains("footers"));
+  BOOST_CHECK((includeListNames(kIncludeAll)
+               == QStringList{"page-numbers", "tabs", "headers", "marginalia", "clean-edge"}));
+  BOOST_CHECK_EQUAL(includeFlagOfType("page_number"), kIncludePageNumbers);
+  BOOST_CHECK_EQUAL(includeFlagOfType("tab"), kIncludeTabs);
+  BOOST_CHECK_EQUAL(includeFlagOfType("text"), 0u);
+}
+
+BOOST_AUTO_TEST_CASE(test_final_box_union) {
+  const Box autoBox{500, 400, 3000, 4500};
+  const std::vector<Element> els{element("tab", Box{3200, 1000, 3400, 1600}),
+                                 element("page_number", Box{2800, 4700, 2950, 4780}),
+                                 element("header", Box{600, 200, 2900, 300})};
+  // Nothing on: the automatic box.
+  FinalBox fb = finalBox(autoBox, kPage, els, {}, kPaper, 0, PageSide::Right, kFrameDpi);
+  BOOST_CHECK((*fb.box == autoBox));
+  BOOST_CHECK(fb.included.empty());
+  // Page numbers only: the tab and the header stay out.
+  fb = finalBox(autoBox, kPage, els, {}, kPaper, kIncludePageNumbers, PageSide::Right, kFrameDpi);
+  BOOST_CHECK((*fb.box == Box{500, 400, 3000, 4780}));
+  BOOST_CHECK((fb.included == std::vector<int>{1}));
+  // Page numbers + tabs + headers.
+  fb = finalBox(autoBox, kPage, els, {}, kPaper, kIncludePageNumbers | kIncludeTabs | kIncludeHeaders,
+                PageSide::Right, kFrameDpi);
+  BOOST_CHECK((*fb.box == Box{500, 200, 3400, 4780}));
+  BOOST_CHECK_EQUAL(fb.included.size(), 3u);
+  BOOST_CHECK(fb.cleaned.isEmpty());
+}
+
+BOOST_AUTO_TEST_CASE(test_final_box_clipped_and_empty) {
+  // Elements are clipped to the page rectangle; one fully outside is not included.
+  const Box page{100, 100, 3400, 4900};
+  const std::vector<Element> els{element("page_number", Box{3300, 4800, 3600, 5000}),
+                                 element("marginalia", Box{3450, 2000, 3500, 2100})};
+  FinalBox fb = finalBox(Box{500, 400, 3000, 4500}, page, els, {}, kPaper, kIncludeAll & ~kCleanPaperEdge,
+                         PageSide::Single, kFrameDpi);
+  BOOST_CHECK((*fb.box == Box{500, 400, 3400, 4900}));
+  BOOST_CHECK((fb.included == std::vector<int>{0}));
+  // No automatic box: the elements alone; nothing at all: no box.
+  fb = finalBox(std::nullopt, page, els, {}, kPaper, kIncludePageNumbers, PageSide::Single, kFrameDpi);
+  BOOST_CHECK((*fb.box == Box{3300, 4800, 3400, 4900}));
+  fb = finalBox(std::nullopt, page, els, {}, kPaper, kIncludeTabs | kCleanPaperEdge, PageSide::Single, kFrameDpi);
+  BOOST_CHECK(!fb.box);
+}
+
+BOOST_AUTO_TEST_CASE(test_clean_edge_outer_to_tab) {
+  // Right page: the automatic box runs over the tab into the next leaves' strips at the edge.
+  const Box autoBox{500, 400, 3450, 4500};
+  const std::vector<Element> els{element("tab", Box{3200, 1000, 3380, 1600}, 0.8),
+                                 element("tab", Box{3250, 3000, 3420, 3600}, 0.6)};  // lower score: ignored
+  const std::vector<Detection> dets{detection("text", Box{520, 420, 3000, 4480}, 0.95)};
+  const FinalBox fb
+      = finalBox(autoBox, kPage, els, dets, kPaper, kIncludeTabs | kCleanPaperEdge, PageSide::Right, kFrameDpi);
+  // Outer side at the best tab's outer edge; it is not cut again to the model's extent.
+  BOOST_CHECK_EQUAL(fb.box->x1, 3380);
+  BOOST_CHECK((fb.cleaned == QStringList{"outer to tab"}));
+  // Without the edge toggle: the union only.
+  const FinalBox plain = finalBox(autoBox, kPage, els, dets, kPaper, kIncludeTabs, PageSide::Right, kFrameDpi);
+  BOOST_CHECK_EQUAL(plain.box->x1, 3450);
+  // A left page: the outer side is the left one; the tab is inside the box there, nothing to cut.
+  const FinalBox left = finalBox(Box{20, 400, 3000, 4500}, kPage, {element("tab", Box{10, 1000, 200, 1600})},
+                                 dets, kPaper, kIncludeTabs | kCleanPaperEdge, PageSide::Left, kFrameDpi);
+  BOOST_CHECK_EQUAL(left.box->x0, 10);  // grown by the tab, not cut (the extent includes the tab)
+}
+
+BOOST_AUTO_TEST_CASE(test_clean_edge_model_extent) {
+  // Single page; the automatic box touches the paper's top edge (a shadow) and its right edge.
+  const Box paper{0, 50, 3400, 5000};
+  const Box autoBox{500, 60, 3390, 4500};
+  const std::vector<Detection> dets{detection("text", Box{520, 300, 3000, 4480}, 0.9),
+                                    detection("picture", Box{400, 100, 600, 200}, 0.4),  // below 0.5: not seen
+                                    detection("page_number", Box{2800, 4520, 2900, 4560}, 0.7)};
+  const FinalBox fb = finalBox(autoBox, kPage, {}, dets, paper, kCleanPaperEdge, PageSide::Single, kFrameDpi);
+  const double pad = 1 * kFramePxPerMm;
+  BOOST_CHECK_CLOSE(fb.box->y0, 300 - pad, 1e-9);   // top: within 3 mm of the paper edge
+  BOOST_CHECK_CLOSE(fb.box->x1, 3000 + pad, 1e-9);  // right: within 3 mm
+  BOOST_CHECK_EQUAL(fb.box->x0, 500);               // left: far from the paper edge
+  BOOST_CHECK_EQUAL(fb.box->y1, 4500);              // bottom: far from the paper edge
+  BOOST_CHECK((fb.cleaned == QStringList{"top to model extent", "right to model extent"}));
+  // A side more than 3 mm from the paper edge is kept.
+  const Box inner{500, 60 + 3.1 * kFramePxPerMm, 3390 - 3.1 * kFramePxPerMm, 4500};
+  const FinalBox fi = finalBox(inner, kPage, {}, dets, paper, kCleanPaperEdge, PageSide::Single, kFrameDpi);
+  BOOST_CHECK((*fi.box == inner));
+  // A cut that would leave no area: the box before the cuts.
+  const std::vector<Detection> tiny{detection("text", Box{3300, 4900, 3310, 4910}, 0.9)};
+  const Box full{0, 50, 1000, 4000};  // left and top touch the paper edge, cut to beyond the right side
+  const FinalBox fd = finalBox(full, kPage, {}, tiny, paper, kCleanPaperEdge, PageSide::Single, kFrameDpi);
+  BOOST_CHECK((*fd.box == full));
+  // Only ever shrinks: a side whose model extent lies beyond it stays.
+  const std::vector<Detection> wide{detection("text", Box{-100, 0, 3500, 5100}, 0.9)};
+  const FinalBox fw = finalBox(autoBox, kPage, {}, wide, paper, kCleanPaperEdge, PageSide::Single, kFrameDpi);
+  BOOST_CHECK((*fw.box == autoBox));
+  BOOST_CHECK(fw.cleaned.isEmpty());
+}
+
+BOOST_AUTO_TEST_CASE(test_params_xml_toggles) {
+  QDomDocument doc;
+  select_content::Params params(QRectF(10, 20, 300, 400), QSizeF(12, 17), QRectF(0, 0, 500, 600),
+                                select_content::Dependencies(), MODE_AUTO, MODE_DISABLED, false);
+  // No toggles: no new attributes or elements (projects stay as they were).
+  QDomElement el = params.toXml(doc, "params");
+  BOOST_CHECK(!el.hasAttribute("includeTabs"));
+  BOOST_CHECK(!el.hasAttribute("cleanPaperEdge"));
+  BOOST_CHECK(el.namedItem("auto-content-rect").isNull());
+  select_content::Params back(el);
+  BOOST_CHECK_EQUAL(back.layoutInclude(), 0u);
+  BOOST_CHECK(!back.autoContentRect());
+  // Toggles and the automatic box round-trip.
+  params.setLayoutInclude(kIncludeTabs | kIncludePageNumbers | kCleanPaperEdge);
+  params.setAutoContentRect(QRectF(15, 25, 280, 380));
+  el = params.toXml(doc, "params");
+  BOOST_CHECK(el.attribute("includeTabs") == "1");
+  BOOST_CHECK(el.attribute("includePageNumbers") == "1");
+  BOOST_CHECK(!el.hasAttribute("includeHeaders"));
+  back = select_content::Params(el);
+  BOOST_CHECK_EQUAL(back.layoutInclude(), kIncludeTabs | kIncludePageNumbers | kCleanPaperEdge);
+  BOOST_REQUIRE(back.autoContentRect());
+  BOOST_CHECK((*back.autoContentRect() == QRectF(15, 25, 280, 380)));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

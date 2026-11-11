@@ -53,6 +53,7 @@
 #include "RelinkingDialog.h"
 #include "ScopedIncDec.h"
 #include "SettingsDialog.h"
+#include "filters/select_content/LayoutDetector.h"
 #include "SkinnedButton.h"
 #include "SmartFilenameOrdering.h"
 #include "StageSequence.h"
@@ -1538,6 +1539,16 @@ void MainWindow::onSettingsChanged() {
 
   if (needInvalidate) {
     m_thumbSequence->invalidateAllThumbnails();
+  }
+
+  // Another layout model (Settings): the current page again, with the new detections.
+  static const select_content::LayoutDetector* lastDetector = nullptr;
+  const auto detector = select_content::LayoutDetector::instance();
+  if (detector.get() != lastDetector) {
+    lastDetector = detector.get();
+    if (isProjectLoaded()) {
+      reloadRequested();
+    }
   }
 }
 

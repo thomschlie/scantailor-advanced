@@ -10,11 +10,13 @@
 #include <QString>
 #include <QTransform>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "LayoutRules.h"
 
 class ImageTransformation;
+class PageId;
 class QImage;
 class QJsonObject;
 
@@ -24,12 +26,13 @@ namespace select_content {
  * in the stage's coordinates (those of the content box).
  */
 struct LayoutResult {
-  // Inputs the result depends on (a changed page geometry or content box means a new run).
+  // Inputs the result depends on (a changed page geometry or model means a new run; in the
+  // automatic content mode also a changed automatic box, see autoBox).
   QTransform xform;
   QPolygonF cropArea;
   QRectF pageRect;
-  QRectF contentRect;
-  int contentMode = 0;
+  QString modelSha256;
+  double frameDpi = 600;
 
   QRectF autoBox;  // automatic content box used by the side-strip tab rule
   QRectF paper;    // the paper inside the page (scanner background excluded)
@@ -37,11 +40,25 @@ struct LayoutResult {
   std::vector<layout::Element> elements;      // the page elements after the rules
   double seconds = 0;
 
-  bool matches(const ImageTransformation& xform, const QRectF& pageRect, const QRectF& contentRect, int mode) const;
+  bool matches(const ImageTransformation& xform, const QRectF& pageRect, const QString& modelSha256) const;
+
+  /**
+   * The content box with the toggles \p flags (layout::finalBox) from the automatic box
+   * \p autoBox (may be null) and this page's elements.
+   */
+  layout::FinalBox finalBox(const QRectF& autoBox, unsigned flags, layout::PageSide side) const;
 
   /** For the CLI report. */
   QJsonObject toJson() const;
 };
+
+/** Rectangle <-> layout::Box. */
+QRectF layoutBoxToRect(const layout::Box& b);
+
+std::optional<layout::Box> rectToLayoutBox(const QRectF& r);
+
+/** Left / right page of a split scan, or single. */
+layout::PageSide pageSideOf(const PageId& pageId);
 
 /**
  * Layout model (ONNX, e.g. a fine-tuned Docling Heron / RT-DETRv2: input pixel_values
@@ -79,6 +96,16 @@ class LayoutDetector {
    * SCANTAILOR_LAYOUT_MODEL (and SCANTAILOR_LAYOUT_MODEL_SHA256); a failure is printed once.
    */
   static std::shared_ptr<LayoutDetector> instance();
+
+  /** No detector from now on (the environment is not read again). */
+  static void unload();
+
+  /**
+   * GUI start-up and settings: the model of the application settings if \p modelPath is not
+   * empty (a failure leaves no detector), else the environment as instance() would read it.
+   * Returns an error message (empty = fine or no model).
+   */
+  static QString configureFromSettings(const QString& modelPath, const QString& expectedSha256);
 
   ~LayoutDetector();
 
