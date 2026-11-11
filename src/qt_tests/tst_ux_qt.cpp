@@ -6,7 +6,15 @@
 #include <CollapsibleGroupBox.h>
 #include <ErrorWidget.h>
 #include <ImageTransformation.h>
+#include <ImageMetadata.h>
+#include <PageInfo.h>
+#include <PageSelectionAccessor.h>
+#include <PageSelectionProvider.h>
+#include <PageSequence.h>
 #include <filters/select_content/ImageView.h>
+#include <filters/select_content/LayoutDetector.h>
+#include <filters/select_content/OptionsWidget.h>
+#include <filters/select_content/Settings.h>
 
 #include <QCheckBox>
 #include <QLineEdit>
@@ -118,4 +126,81 @@ void TestUxQt::testLayoutOverlayDrawn() {
   const QImage after = view.grab().toImage();
   QVERIFY(count(after, magenta) > 50);
   QVERIFY(count(after, green) > 20);
+}
+
+namespace {
+class NoPagesSelected : public PageSelectionProvider {
+ public:
+  PageSequence allPages() const override { return PageSequence(); }
+
+  std::set<PageId> selectedPages() const override { return {}; }
+
+  std::vector<PageRange> selectedRanges() const override { return {}; }
+};
+}  // namespace
+
+void TestUxQt::testLayoutTogglesCommitted() {
+  // Stage 4's "Include" checkboxes: shown from the page's params, greyed out without a layout
+  // model, and a click stores the toggles in the page's params (the automatic box kept beside).
+  using namespace select_content;
+  LayoutDetector::unload();  // no model, whatever the environment says
+  auto settings = std::make_shared<Settings>();
+  OptionsWidget widget(settings, PageSelectionAccessor(std::make_shared<NoPagesSelected>()));
+  const PageId pageId(ImageId("/nonexistent/page.png"), PageId::LEFT_PAGE);
+  widget.preUpdateUI(PageInfo(pageId, ImageMetadata(QSize(2000, 3000), Dpi(600, 600)), 2, false, false));
+
+  const QRectF autoBox(100, 200, 1500, 2400);
+  OptionsWidget::UiData ui;
+  ui.setPageRect(QRectF(0, 0, 2000, 3000));
+  ui.setContentRect(QRectF(50, 200, 1550, 2500));  // automatic box + tab + page number
+  ui.setContentDetectionMode(MODE_AUTO);
+  ui.setLayoutInclude(layout::kIncludeTabs | layout::kIncludePageNumbers);
+  ui.setAutoContentRect(autoBox);
+  widget.postUpdateUI(ui);
+
+  auto* group = widget.findChild<QWidget*>("layoutIncludeGroup");
+  auto* numbers = widget.findChild<QCheckBox*>("includePageNumbersCB");
+  auto* tabs = widget.findChild<QCheckBox*>("includeTabsCB");
+  auto* headers = widget.findChild<QCheckBox*>("includeHeadersCB");
+  auto* marginalia = widget.findChild<QCheckBox*>("includeMarginaliaCB");
+  auto* clean = widget.findChild<QCheckBox*>("cleanPaperEdgeCB");
+  QVERIFY(group && numbers && tabs && headers && marginalia && clean);
+  QVERIFY(numbers->isChecked() && tabs->isChecked());
+  QVERIFY(!headers->isChecked() && !marginalia->isChecked() && !clean->isChecked());
+  QVERIFY(!group->isEnabled());  // no model
+  QVERIFY(group->toolTip().contains(LayoutDetector::isBuilt() ? "No layout model" : "no layout detector"));
+
+  // As with a model loaded: a click commits the toggles and reloads the page (automatic box).
+  group->setEnabled(true);
+  QSignalSpy reload(&widget, SIGNAL(reloadRequested()));
+  clean->click();
+  QCOMPARE(reload.count(), 1);
+  std::unique_ptr<Params> params = settings->getPageParams(pageId);
+  QVERIFY(params != nullptr);
+  QCOMPARE(params->layoutInclude(), layout::kIncludeTabs | layout::kIncludePageNumbers | layout::kCleanPaperEdge);
+  QVERIFY(params->autoContentRect().has_value());
+  QCOMPARE(*params->autoContentRect(), autoBox);
+  QCOMPARE(params->contentDetectionMode(), MODE_AUTO);
+
+  numbers->click();
+  tabs->click();
+  params = settings->getPageParams(pageId);
+  QCOMPARE(params->layoutInclude(), static_cast<unsigned>(layout::kCleanPaperEdge));
+  QCOMPARE(reload.count(), 3);
+
+  // A box set by hand: the toggles are stored, but nothing is reloaded (only the automatic box
+  // follows them).
+  ui.setContentDetectionMode(MODE_MANUAL);
+  ui.setLayoutInclude(0);
+  ui.setAutoContentRect(std::nullopt);
+  widget.postUpdateUI(ui);
+  QVERIFY(!clean->isChecked());
+  group->setEnabled(true);
+  reload.clear();
+  headers->click();
+  QCOMPARE(reload.count(), 0);
+  params = settings->getPageParams(pageId);
+  QCOMPARE(params->layoutInclude(), static_cast<unsigned>(layout::kIncludeHeaders));
+  QCOMPARE(params->contentDetectionMode(), MODE_MANUAL);
+  QCOMPARE(params->contentRect(), QRectF(50, 200, 1550, 2500));
 }

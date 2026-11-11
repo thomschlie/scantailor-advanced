@@ -15,6 +15,7 @@ class TestUxQt : public QObject {
   void testCollapsibleGroupBoxStateAndSignal();
   void testErrorWidgetCreation();
   void testLayoutOverlayDrawn();
+  void testLayoutTogglesCommitted();
 };
 
 #endif
