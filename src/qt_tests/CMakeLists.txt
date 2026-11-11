@@ -8,5 +8,8 @@ target_link_libraries(
     qt_tests
     PRIVATE core foundation ${Qt_Test_lib} ${Qt_Core_lib} ${Qt_Gui_lib} ${Qt_Widgets_lib} ${EXTRA_LIBS})
 target_include_directories(qt_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
+# select_content's OptionsWidget (layout toggles test) includes its generated ui_OptionsWidget.h.
+target_link_libraries(qt_tests PRIVATE select_content)
+target_include_directories(qt_tests PRIVATE "$<TARGET_PROPERTY:select_content,BINARY_DIR>/select_content_autogen/include")
 
 add_test(NAME qt_tests COMMAND qt_tests)
