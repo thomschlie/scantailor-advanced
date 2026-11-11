@@ -7,11 +7,13 @@
 #include <tiff.h>
 
 #include <QtCore/QDir>
+#include <QtWidgets/QFileDialog>
 #include <QtWidgets/QMessageBox>
 #include <cmath>
 
 #include "Application.h"
 #include "OpenGLSupport.h"
+#include "filters/select_content/LayoutDetector.h"
 
 SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
   ui.setupUi(this);
@@ -82,7 +84,34 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
   ui.singleColumnThumbnailsCB->setChecked(settings.isSingleColumnThumbnailDisplayEnabled());
   ui.cancelingSelectionQuestionCB->setChecked(settings.isCancelingSelectionQuestionEnabled());
 
+  ui.layoutModelPathEdit->setText(settings.getLayoutModelPath());
+  ui.layoutModelShaEdit->setText(settings.getLayoutModelSha256());
+  ui.layoutModelShaEdit->setPlaceholderText(tr("optional"));
+  ui.layoutModelGroup->setEnabled(select_content::LayoutDetector::isBuilt());
+  connect(ui.layoutModelBrowseBtn, SIGNAL(clicked()), SLOT(browseLayoutModel()));
+  updateLayoutModelStatus();
+
   connect(ui.buttonBox, SIGNAL(accepted()), SLOT(commitChanges()));
+}
+
+void SettingsDialog::browseLayoutModel() {
+  const QString file = QFileDialog::getOpenFileName(this, tr("Layout model"), ui.layoutModelPathEdit->text(),
+                                                    tr("ONNX models (*.onnx)"));
+  if (!file.isEmpty()) {
+    ui.layoutModelPathEdit->setText(file);
+  }
+}
+
+void SettingsDialog::updateLayoutModelStatus() {
+  using select_content::LayoutDetector;
+  if (!LayoutDetector::isBuilt()) {
+    ui.layoutModelStatusLabel->setText(tr("This build has no layout detector (ONNX Runtime)."));
+  } else if (const auto detector = LayoutDetector::instance()) {
+    ui.layoutModelStatusLabel->setText(
+        tr("Loaded: %1 (SHA-256 %2)").arg(detector->modelPath(), detector->modelSha256().left(16) + "..."));
+  } else {
+    ui.layoutModelStatusLabel->setText(tr("No layout model loaded."));
+  }
 }
 
 SettingsDialog::~SettingsDialog() = default;
@@ -121,6 +150,19 @@ void SettingsDialog::commitChanges() {
 
   settings.setSingleColumnThumbnailDisplayEnabled(ui.singleColumnThumbnailsCB->isChecked());
   settings.setCancelingSelectionQuestionEnabled(ui.cancelingSelectionQuestionCB->isChecked());
+
+  {
+    const QString path = ui.layoutModelPathEdit->text().trimmed();
+    const QString sha = ui.layoutModelShaEdit->text().trimmed();
+    if (path != settings.getLayoutModelPath() || sha != settings.getLayoutModelSha256()) {
+      settings.setLayoutModelPath(path);
+      settings.setLayoutModelSha256(sha);
+      const QString error = select_content::LayoutDetector::configureFromSettings(path, sha);
+      if (!error.isEmpty()) {
+        QMessageBox::warning(this, tr("Layout model"), tr("The layout model was not loaded: %1").arg(error));
+      }
+    }
+  }
 
   emit settingsChanged();
 }

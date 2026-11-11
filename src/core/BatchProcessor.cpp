@@ -40,6 +40,7 @@
 #include "SelectedPage.h"
 #include "StageSequence.h"
 #include "ThumbnailPixmapCache.h"
+#include "filters/select_content/Filter.h"
 
 namespace {
 // The filters ask for the page selection only from their option widgets ("Apply to ...").
@@ -179,6 +180,12 @@ int BatchProcessor::process(const Options& options) {
     // parameters of every stage before their tasks are created.
     for (const PageInfo& page : pages) {
       m_stages->loadDefaultSettings(page);
+    }
+    // --include: the layout toggles of every page, set before "Select content" runs.
+    if (stage == m_stages->selectContentFilterIdx() && options.layoutInclude >= 0) {
+      for (const PageInfo& page : pages) {
+        m_stages->selectContentFilter()->setLayoutInclude(page.id(), static_cast<unsigned>(options.layoutInclude));
+      }
     }
     if (options.stageStarted) {
       options.stageStarted(stage, static_cast<int>(pages.numPages()));

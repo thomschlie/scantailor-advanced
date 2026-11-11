@@ -269,6 +269,68 @@
        </widget>
       </item>
       <item>
+       <widget class="CollapsibleGroupBox" name="layoutIncludeGroup">
+        <property name="title">
+         <string>Include</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+        <layout class="QVBoxLayout" name="layoutIncludeLayout">
+         <item>
+          <widget class="QCheckBox" name="includePageNumbersCB">
+           <property name="toolTip">
+            <string>Take the page numbers found by the layout model into the content box.</string>
+           </property>
+           <property name="text">
+            <string>Page numbers</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QCheckBox" name="includeTabsCB">
+           <property name="toolTip">
+            <string>Take the thumb-index tabs (dark labels at the outer page edge) into the content box.</string>
+           </property>
+           <property name="text">
+            <string>Thumb-index tabs</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QCheckBox" name="includeHeadersCB">
+           <property name="toolTip">
+            <string>Take the running headers into the content box.</string>
+           </property>
+           <property name="text">
+            <string>Headers</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QCheckBox" name="includeMarginaliaCB">
+           <property name="toolTip">
+            <string>Take notes in the margin into the content box.</string>
+           </property>
+           <property name="text">
+            <string>Marginalia</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QCheckBox" name="cleanPaperEdgeCB">
+           <property name="toolTip">
+            <string>Cut the paper edge off the content box: on a page with a tab its outer side ends at the tab; a side at the paper edge ends just beyond what the layout model found on the page. Only ever shrinks.</string>
+           </property>
+           <property name="text">
+            <string>Clean paper edge</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
        <layout class="QHBoxLayout">
         <item>
          <spacer>

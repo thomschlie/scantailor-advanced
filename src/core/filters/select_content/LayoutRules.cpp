@@ -413,5 +413,165 @@ std::vector<Element> selectElements(const std::vector<Detection>& dets,
   }
   return out;
 }
+
+namespace {
+// Element type names and the CLI names of the toggles, in flag order.
+struct IncludeName {
+  unsigned flag;
+  const char* type;  // element type, or null
+  const char* name;  // CLI / report name
+};
+
+constexpr IncludeName kIncludeNames[] = {
+    {kIncludePageNumbers, "page_number", "page-numbers"},
+    {kIncludeTabs, "tab", "tabs"},
+    {kIncludeHeaders, "header", "headers"},
+    {kIncludeMarginalia, "marginalia", "marginalia"},
+    {kCleanPaperEdge, nullptr, "clean-edge"},
+};
+}  // namespace
+
+unsigned includeFlagOfType(const QString& type) {
+  for (const IncludeName& n : kIncludeNames) {
+    if (n.type && type == QLatin1String(n.type)) {
+      return n.flag;
+    }
+  }
+  return 0;
+}
+
+unsigned parseIncludeList(const QString& list, QString* error) {
+  unsigned flags = 0;
+  for (const QString& part : list.split(',', Qt::SkipEmptyParts)) {
+    const QString name = part.trimmed();
+    if (name == QLatin1String("none")) {
+      continue;
+    }
+    if (name == QLatin1String("all")) {
+      flags |= kIncludeAll;
+      continue;
+    }
+    bool found = false;
+    for (const IncludeName& n : kIncludeNames) {
+      if (name == QLatin1String(n.name)) {
+        flags |= n.flag;
+        found = true;
+      }
+    }
+    if (!found) {
+      if (error) {
+        *error = QStringLiteral("unknown element \"%1\" (page-numbers, tabs, headers, marginalia, clean-edge, all, none)")
+                     .arg(name);
+      }
+      return 0;
+    }
+  }
+  return flags;
+}
+
+QStringList includeListNames(const unsigned flags) {
+  QStringList out;
+  for (const IncludeName& n : kIncludeNames) {
+    if (flags & n.flag) {
+      out.push_back(QLatin1String(n.name));
+    }
+  }
+  return out;
+}
+
+FinalBox finalBox(const std::optional<Box>& autoBox,
+                  const Box& pageRect,
+                  const std::vector<Element>& elements,
+                  const std::vector<Detection>& detections,
+                  const Box& paper,
+                  const unsigned flags,
+                  const PageSide side,
+                  const double frameDpi) {
+  FinalBox res;
+  // 1. ml/score.final_with_elements: automatic box U the included elements, clipped to the page.
+  std::optional<Box> box;
+  if (autoBox && autoBox->isValid()) {
+    box = autoBox;
+  }
+  for (size_t i = 0; i < elements.size(); ++i) {
+    const unsigned f = includeFlagOfType(elements[i].type);
+    if (!f || !(flags & f)) {
+      continue;
+    }
+    const std::optional<Box> b = clip(elements[i].box, pageRect);
+    if (!b) {
+      continue;
+    }
+    res.included.push_back(static_cast<int>(i));
+    box = box ? Box{std::min(box->x0, b->x0), std::min(box->y0, b->y0), std::max(box->x1, b->x1),
+                    std::max(box->y1, b->y1)}
+              : *b;
+  }
+  res.box = box;
+  if (!box || !(flags & kCleanPaperEdge)) {
+    return res;
+  }
+
+  // 2. ml/apply_boxes.clean: the paper edge cut off.
+  const double px = frameDpi / 25.4;
+  double b[4] = {box->x0, box->y0, box->x1, box->y1};
+  QStringList cut;
+  // The tab of highest score (the first of equals, as Python's stable sort).
+  const Element* tab = nullptr;
+  for (const Element& e : elements) {
+    if (e.type == QLatin1String("tab") && (!tab || e.score > tab->score)) {
+      tab = &e;
+    }
+  }
+  if (tab && side == PageSide::Left && tab->box.x0 > b[0] + 1) {
+    b[0] = tab->box.x0;
+    cut.push_back(QStringLiteral("outer to tab"));
+  } else if (tab && side == PageSide::Right && tab->box.x1 < b[2] - 1) {
+    b[2] = tab->box.x1;
+    cut.push_back(QStringLiteral("outer to tab"));
+  }
+  std::vector<Box> seen;
+  for (const Detection& d : detections) {
+    if (d.score >= kEdgeSeenScore) {
+      seen.push_back(d.box);
+    }
+  }
+  for (const Element& e : elements) {
+    seen.push_back(e.box);
+  }
+  if (!seen.empty()) {
+    double ext[4] = {seen[0].x0, seen[0].y0, seen[0].x1, seen[0].y1};
+    for (const Box& s : seen) {
+      ext[0] = std::min(ext[0], s.x0);
+      ext[1] = std::min(ext[1], s.y0);
+      ext[2] = std::max(ext[2], s.x1);
+      ext[3] = std::max(ext[3], s.y1);
+    }
+    const double pad = kEdgePadMm * px;
+    const double tol = kEdgeTouchMm * px;
+    const double pap[4] = {paper.x0, paper.y0, paper.x1, paper.y1};
+    static const char* const names[4] = {"left", "top", "right", "bottom"};
+    for (int i = 0; i < 4; ++i) {
+      const bool lo = i < 2;
+      const bool touches = lo ? (b[i] <= pap[i] + tol) : (b[i] >= pap[i] - tol);
+      if (!touches) {
+        continue;
+      }
+      const double nv = lo ? ext[i] - pad : ext[i] + pad;
+      if ((lo && nv > b[i] + 1) || (!lo && nv < b[i] - 1)) {
+        if (tab && ((side == PageSide::Left && i == 0) || (side == PageSide::Right && i == 2))) {
+          continue;  // already the tab's edge
+        }
+        b[i] = nv;
+        cut.push_back(QStringLiteral("%1 to model extent").arg(QLatin1String(names[i])));
+      }
+    }
+  }
+  if (b[2] > b[0] && b[3] > b[1]) {
+    res.box = Box{b[0], b[1], b[2], b[3]};
+  }
+  res.cleaned = cut;  // apply_boxes reports the cuts even when it keeps the box
+  return res;
+}
 }  // namespace layout
 }  // namespace select_content

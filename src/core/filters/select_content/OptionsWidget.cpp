@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "ApplyDialog.h"
+#include "LayoutDetector.h"
 #include "Settings.h"
 
 namespace select_content {
@@ -31,6 +32,7 @@ void OptionsWidget::preUpdateUI(const PageInfo& pageInfo) {
 
   contentBoxGroup->setEnabled(false);
   pageBoxGroup->setEnabled(false);
+  layoutIncludeGroup->setEnabled(false);
 
   pageDetectOptions->setVisible(false);
   fineTuneBtn->setVisible(false);
@@ -52,6 +54,7 @@ void OptionsWidget::postUpdateUI(const UiData& uiData) {
 
   updatePageDetectOptionsDisplay();
   updatePageRectSize(m_uiData.pageRect().size());
+  updateLayoutIncludeDisplay();
 }
 
 void OptionsWidget::manualContentRectSet(const QRectF& contentRect) {
@@ -119,6 +122,54 @@ void OptionsWidget::fineTuningChanged(bool checked) {
   }
 }
 
+void OptionsWidget::layoutIncludeChanged() {
+  unsigned flags = 0;
+  if (includePageNumbersCB->isChecked()) {
+    flags |= layout::kIncludePageNumbers;
+  }
+  if (includeTabsCB->isChecked()) {
+    flags |= layout::kIncludeTabs;
+  }
+  if (includeHeadersCB->isChecked()) {
+    flags |= layout::kIncludeHeaders;
+  }
+  if (includeMarginaliaCB->isChecked()) {
+    flags |= layout::kIncludeMarginalia;
+  }
+  if (cleanPaperEdgeCB->isChecked()) {
+    flags |= layout::kCleanPaperEdge;
+  }
+  m_uiData.setLayoutInclude(flags);
+  commitCurrentParams();
+  // Only the automatic content box follows the toggles.
+  if (m_uiData.contentDetectionMode() == MODE_AUTO) {
+    emit reloadRequested();
+  }
+}
+
+void OptionsWidget::updateLayoutIncludeDisplay() {
+  const unsigned flags = m_uiData.layoutInclude();
+  includePageNumbersCB->setChecked((flags & layout::kIncludePageNumbers) != 0);
+  includeTabsCB->setChecked((flags & layout::kIncludeTabs) != 0);
+  includeHeadersCB->setChecked((flags & layout::kIncludeHeaders) != 0);
+  includeMarginaliaCB->setChecked((flags & layout::kIncludeMarginalia) != 0);
+  cleanPaperEdgeCB->setChecked((flags & layout::kCleanPaperEdge) != 0);
+  // Greyed out without a layout model.
+  const bool haveModel = LayoutDetector::instance() != nullptr;
+  layoutIncludeGroup->setEnabled(haveModel);
+  if (!haveModel) {
+    layoutIncludeGroup->setToolTip(
+        LayoutDetector::isBuilt()
+            ? tr("No layout model loaded (Settings, or the environment variable SCANTAILOR_LAYOUT_MODEL).")
+            : tr("This build has no layout detector (ONNX Runtime)."));
+  } else if (m_uiData.contentDetectionMode() != MODE_AUTO) {
+    layoutIncludeGroup->setToolTip(tr("Only the automatic content box takes these in; this page's box is not "
+                                      "automatic."));
+  } else {
+    layoutIncludeGroup->setToolTip(tr("Elements found by the layout model that the content box takes in."));
+  }
+}
+
 void OptionsWidget::updateContentModeIndication(const AutoManualMode mode) {
   switch (mode) {
     case MODE_AUTO:
@@ -170,6 +221,8 @@ void OptionsWidget::commitCurrentParams() {
 
   Params params(m_uiData.contentRect(), m_uiData.contentSizeMM(), m_uiData.pageRect(), m_uiData.dependencies(),
                 m_uiData.contentDetectionMode(), m_uiData.pageDetectionMode(), m_uiData.isFineTuningCornersEnabled());
+  params.setLayoutInclude(m_uiData.layoutInclude());
+  params.setAutoContentRect(m_uiData.autoContentRect());
   m_settings->setPageParams(m_pageId, params);
 }
 
@@ -203,9 +256,9 @@ void OptionsWidget::applySelection(const std::set<PageId>& pages, const bool app
     return;
   }
 
-  const Params params(m_uiData.contentRect(), m_uiData.contentSizeMM(), m_uiData.pageRect(), Dependencies(),
-                      m_uiData.contentDetectionMode(), m_uiData.pageDetectionMode(),
-                      m_uiData.isFineTuningCornersEnabled());
+  Params params(m_uiData.contentRect(), m_uiData.contentSizeMM(), m_uiData.pageRect(), Dependencies(),
+                m_uiData.contentDetectionMode(), m_uiData.pageDetectionMode(), m_uiData.isFineTuningCornersEnabled());
+  params.setLayoutInclude(m_uiData.layoutInclude());  // the toggles go with the content box mode
 
   for (const PageId& pageId : pages) {
     if (m_pageId == pageId) {
@@ -215,6 +268,8 @@ void OptionsWidget::applySelection(const std::set<PageId>& pages, const bool app
     Params newParams(params);
     std::unique_ptr<Params> oldParams = m_settings->getPageParams(pageId);
     if (oldParams) {
+      // The automatic box is the target page's own.
+      newParams.setAutoContentRect(oldParams->autoContentRect());
       if (newParams.pageDetectionMode() == MODE_MANUAL) {
         if (!applyPageBox) {
           newParams.setPageRect(oldParams->pageRect());
@@ -306,6 +361,9 @@ void OptionsWidget::setupUiConnections() {
           boost::bind(&OptionsWidget::pageDetectToggled, this, MODE_DISABLED));
   CONNECT(fineTuneBtn, SIGNAL(toggled(bool)), this, SLOT(fineTuningChanged(bool)));
   CONNECT(applyToBtn, SIGNAL(clicked()), this, SLOT(showApplyToDialog()));
+  for (QCheckBox* cb : {includePageNumbersCB, includeTabsCB, includeHeadersCB, includeMarginaliaCB, cleanPaperEdgeCB}) {
+    CONNECT(cb, SIGNAL(clicked(bool)), this, SLOT(layoutIncludeChanged()));
+  }
 }
 
 #undef CONNECT

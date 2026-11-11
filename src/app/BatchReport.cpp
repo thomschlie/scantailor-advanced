@@ -108,8 +108,9 @@ bool writeBatchReport(const BatchProcessor& batch, const QString& reportFile) {
   // Layout detector results (only with a model; kept in memory, not in the project).
   std::map<QString, QJsonObject> layoutByKey;
   for (const PageInfo& page : batch.pages()->toPageSequence(PAGE_VIEW)) {
-    if (const auto layout = batch.stages()->selectContentFilter()->layoutResult(page.id())) {
-      layoutByKey[page.imageId().filePath() + "|" + page.id().subPageAsString()] = layout->toJson();
+    const QJsonObject layout = batch.stages()->selectContentFilter()->layoutReport(page.id());
+    if (!layout.isEmpty()) {
+      layoutByKey[page.imageId().filePath() + "|" + page.id().subPageAsString()] = layout;
     }
   }
   for (const QString& id : order) {

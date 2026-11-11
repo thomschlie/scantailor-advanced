@@ -132,10 +132,17 @@ int main(int argc, char* argv[]) {
   p.addOption({"report", "Write a per-page JSON report (settings of every stage).", "file"});
   p.addOption({"layout-model",
                "Layout model (ONNX) for the select-content stage: detected page numbers, tabs, headers and "
-               "marginalia go into the report. Default: $SCANTAILOR_LAYOUT_MODEL. Content boxes are not changed.",
+               "marginalia go into the report. Default: $SCANTAILOR_LAYOUT_MODEL. Content boxes change only "
+               "with --include (or toggles stored in the project).",
                "file"});
   p.addOption({"layout-model-sha256",
                "Refuse the layout model unless its sha256 is this. Default: $SCANTAILOR_LAYOUT_MODEL_SHA256.", "hex"});
+  p.addOption({"include",
+               "Layout toggles of stage 4, set on every page (comma separated): page-numbers, tabs, headers, "
+               "marginalia take those elements into the automatic content box; clean-edge cuts the paper edge "
+               "off it; all; none. Needs a layout model and stage 4 in the range. Default: each page keeps "
+               "its own (off unless set in the GUI). Boxes set by hand are never changed.",
+               "list"});
   p.addOption({{"v", "verbose"}, "Print stages and pages."});
   p.process(app);
 
@@ -185,6 +192,20 @@ int main(int argc, char* argv[]) {
       }
     } else if (p.isSet("layout-model-sha256")) {
       return fail("--layout-model-sha256 needs --layout-model");
+    }
+    if (p.isSet("include")) {
+      QString error;
+      const unsigned flags = select_content::layout::parseIncludeList(p.value("include"), &error);
+      if (!error.isEmpty()) {
+        return fail("--include: " + error);
+      }
+      if (flags != 0 && model.isEmpty()) {
+        return fail("--include needs a layout model (--layout-model or $SCANTAILOR_LAYOUT_MODEL)");
+      }
+      if (opt.startFilter > 3 || opt.endFilter < 3) {
+        return fail("--include needs stage 4 (select content) in the stage range");
+      }
+      opt.layoutInclude = static_cast<int>(flags);
     }
   }
 
