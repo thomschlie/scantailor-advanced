@@ -9,6 +9,7 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <algorithm>
 #include <boost/bind/bind.hpp>
 #include <cmath>
 #include <map>
@@ -193,7 +194,56 @@ void ImageView::removeContentBox() {
   emit manualContentRectSet(m_contentRect);
 }
 
+void ImageView::setLayoutElements(const std::vector<layout::Element>& elements) {
+  m_layoutElements = elements;
+  update();
+}
+
+void ImageView::paintLayoutElements(QPainter& painter) const {
+  if (m_layoutElements.empty()) {
+    return;
+  }
+  painter.save();
+  painter.setRenderHints(QPainter::Antialiasing, true);
+  painter.setBrush(Qt::NoBrush);
+  const QTransform toWidget = painter.worldTransform();
+  QFont font = painter.font();
+  font.setPointSizeF(std::max(7.0, font.pointSizeF() * 0.85));
+  for (const layout::Element& e : m_layoutElements) {
+    QColor color(0x80, 0x80, 0x80);
+    QString name = e.type;
+    if (e.type == QLatin1String("page_number")) {
+      color = QColor(0x00, 0xa0, 0x00);
+      name = tr("page number");
+    } else if (e.type == QLatin1String("tab")) {
+      color = QColor(0xd0, 0x00, 0xd0);
+      name = tr("tab");
+    } else if (e.type == QLatin1String("header")) {
+      color = QColor(0x00, 0x90, 0xc0);
+      name = tr("header");
+    } else if (e.type == QLatin1String("marginalia")) {
+      color = QColor(0xc0, 0x70, 0x00);
+      name = tr("marginalia");
+    }
+    QPen pen(color);
+    pen.setWidthF(1.0);
+    pen.setCosmetic(true);
+    painter.setPen(pen);
+    const QRectF r(QPointF(e.box.x0, e.box.y0), QPointF(e.box.x1, e.box.y1));
+    painter.setWorldTransform(toWidget);
+    painter.drawRect(r);
+    // Label above the box, in widget coordinates (not scaled with the zoom).
+    const QRectF wr = toWidget.mapRect(r);
+    painter.setWorldTransform(QTransform());
+    painter.setFont(font);
+    painter.drawText(wr.topLeft() + QPointF(0, -3), QStringLiteral("%1 %2").arg(name).arg(e.score, 0, 'f', 2));
+  }
+  painter.restore();
+}
+
 void ImageView::onPaint(QPainter& painter, const InteractionState& interaction) {
+  paintLayoutElements(painter);
+
   if (m_contentRect.isNull() && !m_pageRectEnabled) {
     return;
   }

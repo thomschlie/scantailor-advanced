@@ -263,6 +263,35 @@ if (UNIX)
   link_libraries(Threads::Threads)
 endif()
 
+#=================================== Layout detector ===================================#
+
+# Optional: a layout model (ONNX) run through ONNX Runtime in the "Select Content" stage, which
+# detects page numbers, thumb-index tabs, headers and marginalia. Without ONNX Runtime the
+# detector is not built and ScanTailor behaves as without this option.
+option(ENABLE_LAYOUT_DETECTOR "Build the layout detector (needs ONNX Runtime)." ON)
+set(HAVE_LAYOUT_DETECTOR OFF)
+if (ENABLE_LAYOUT_DETECTOR)
+  find_package(onnxruntime CONFIG QUIET)
+  if (TARGET onnxruntime::onnxruntime)
+    set(LAYOUT_DETECTOR_LIBS onnxruntime::onnxruntime)
+    set(HAVE_LAYOUT_DETECTOR ON)
+  else()
+    find_package(PkgConfig QUIET)
+    if (PkgConfig_FOUND)
+      pkg_check_modules(ONNXRUNTIME IMPORTED_TARGET libonnxruntime)
+      if (ONNXRUNTIME_FOUND)
+        set(LAYOUT_DETECTOR_LIBS PkgConfig::ONNXRUNTIME)
+        set(HAVE_LAYOUT_DETECTOR ON)
+      endif()
+    endif()
+  endif()
+  if (HAVE_LAYOUT_DETECTOR)
+    message(STATUS "Layout detector: enabled (ONNX Runtime)")
+  else()
+    message(STATUS "Layout detector: ONNX Runtime not found, not built")
+  endif()
+endif()
+
 #=================================== System ===================================#
 
 set(EXTRA_LIBS "")
