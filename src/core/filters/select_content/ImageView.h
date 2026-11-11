@@ -15,6 +15,7 @@
 #include "DraggableLineSegment.h"
 #include "DraggablePoint.h"
 #include "ImageViewBase.h"
+#include "LayoutRules.h"
 #include "ObjectDragHandler.h"
 #include "ZoomHandler.h"
 
@@ -37,6 +38,9 @@ class ImageView : public ImageViewBase, private InteractionHandler {
             bool pageRectEnabled);
 
   ~ImageView() override;
+
+  /** Layout detector elements to draw (thin outlines, a colour per type); virtual image coordinates. */
+  void setLayoutElements(const std::vector<layout::Element>& elements);
 
  signals:
 
@@ -62,6 +66,8 @@ class ImageView : public ImageViewBase, private InteractionHandler {
   enum Edge { LEFT = 1, RIGHT = 2, TOP = 4, BOTTOM = 8 };
 
   void onPaint(QPainter& painter, const InteractionState& interaction) override;
+
+  void paintLayoutElements(QPainter& painter) const;
 
   void onContextMenuEvent(QContextMenuEvent* event, InteractionState& interaction) override;
 
@@ -149,6 +155,8 @@ class ImageView : public ImageViewBase, private InteractionHandler {
   QSizeF m_minBoxSize;
 
   ContentMask m_contentMask;
+
+  std::vector<layout::Element> m_layoutElements;
 
   Qt::KeyboardModifier m_adjustmentVerticalModifier;
   Qt::KeyboardModifier m_adjustmentHorizontalModifier;

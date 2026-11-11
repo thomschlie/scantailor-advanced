@@ -5,6 +5,8 @@
 
 #include <CollapsibleGroupBox.h>
 #include <ErrorWidget.h>
+#include <ImageTransformation.h>
+#include <filters/select_content/ImageView.h>
 
 #include <QCheckBox>
 #include <QLineEdit>
@@ -74,4 +76,46 @@ void TestUxQt::testCollapsibleGroupBoxStateAndSignal() {
 void TestUxQt::testErrorWidgetCreation() {
   ErrorWidget widget("Error de prueba", Qt::PlainText);
   QVERIFY(widget.findChildren<QWidget*>().size() >= 1);
+}
+
+void TestUxQt::testLayoutOverlayDrawn() {
+  // The stage-4 view draws the layout detector's elements as thin outlines, a colour per type.
+  QImage image(400, 600, QImage::Format_RGB32);
+  image.fill(Qt::white);
+  const ImageTransformation xform(QRectF(image.rect()), Dpi(300, 300));
+  select_content::ImageView view(image, select_content::ImageView::createDownscaledImage(image), ContentMask(), xform,
+                                 QRectF(), QRectF(image.rect()), false);
+  view.resize(400, 600);
+  // Antialiased outlines: count pixels of the colour's hue, not exact values.
+  auto count = [](const QImage& img, auto pred) {
+    int n = 0;
+    for (int y = 0; y < img.height(); ++y) {
+      for (int x = 0; x < img.width(); ++x) {
+        const QRgb p = img.pixel(x, y);
+        n += pred(qRed(p), qGreen(p), qBlue(p));
+      }
+    }
+    return n;
+  };
+  auto magenta = [](int r, int g, int b) { return r > g + 60 && b > g + 60; };
+  auto green = [](int r, int g, int b) { return g > r + 60 && g > b + 60; };
+  view.setAttribute(Qt::WA_DontShowOnScreen);
+  view.show();
+  QCoreApplication::processEvents();
+  const QImage before = view.grab().toImage();
+  QCOMPARE(count(before, magenta), 0);
+
+  select_content::layout::Element tab;
+  tab.type = "tab";
+  tab.score = 0.9;
+  tab.box = {340, 100, 390, 250};
+  select_content::layout::Element number;
+  number.type = "page_number";
+  number.score = 0.8;
+  number.box = {180, 560, 220, 590};
+  view.setLayoutElements({tab, number});
+  QCoreApplication::processEvents();
+  const QImage after = view.grab().toImage();
+  QVERIFY(count(after, magenta) > 50);
+  QVERIFY(count(after, green) > 20);
 }

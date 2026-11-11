@@ -14,6 +14,7 @@
 #include <core/DefaultParamsProfileManager.h>
 #include <core/DefaultParamsProvider.h>
 #include "filters/output/ColorParams.h"
+#include "filters/select_content/LayoutDetector.h"
 
 #include "Dpi.h"
 
@@ -91,6 +92,12 @@ int main(int argc, char* argv[]) {
   p.addOption({"rtl", "Right-to-left page order (images mode)."});
   p.addOption({{"j", "threads"}, "Parallel pages per stage. Default: number of CPUs.", "n"});
   p.addOption({"report", "Write a per-page JSON report (settings of every stage).", "file"});
+  p.addOption({"layout-model",
+               "Layout model (ONNX) for the select-content stage: detected page numbers, tabs, headers and "
+               "marginalia go into the report. Default: $SCANTAILOR_LAYOUT_MODEL. Content boxes are not changed.",
+               "file"});
+  p.addOption({"layout-model-sha256",
+               "Refuse the layout model unless its sha256 is this. Default: $SCANTAILOR_LAYOUT_MODEL_SHA256.", "hex"});
   p.addOption({{"v", "verbose"}, "Print stages and pages."});
   p.process(app);
 
@@ -112,6 +119,26 @@ int main(int argc, char* argv[]) {
     return fail("--threads must be at least 1");
   }
   opt.verbose = p.isSet("verbose");
+
+  // Layout detector: load the model now, so a bad path or hash fails before any processing.
+  {
+    const QString model
+        = p.isSet("layout-model") ? p.value("layout-model") : qEnvironmentVariable("SCANTAILOR_LAYOUT_MODEL");
+    const QString sha = p.isSet("layout-model-sha256") ? p.value("layout-model-sha256")
+                                                       : qEnvironmentVariable("SCANTAILOR_LAYOUT_MODEL_SHA256");
+    if (!model.isEmpty()) {
+      const QString error = select_content::LayoutDetector::configure(model, sha);
+      if (!error.isEmpty()) {
+        return fail(error);
+      }
+      if (opt.verbose) {
+        std::cout << "layout model: " << model.toStdString() << " (sha256 "
+                  << select_content::LayoutDetector::instance()->modelSha256().toStdString() << ")" << std::endl;
+      }
+    } else if (p.isSet("layout-model-sha256")) {
+      return fail("--layout-model-sha256 needs --layout-model");
+    }
+  }
 
   // Default parameters for pages without settings.
   {
