@@ -249,6 +249,12 @@ int ConsoleBatch::process(const Options& options) {
         m_stages->filterAt(i)->loadDefaultSettings(page);
       }
     }
+    // --include: the layout toggles of every page, set before "Select content" runs.
+    if (stage == m_stages->selectContentFilterIdx() && options.layoutInclude >= 0) {
+      for (const PageInfo& page : pages) {
+        m_stages->selectContentFilter()->setLayoutInclude(page.id(), static_cast<unsigned>(options.layoutInclude));
+      }
+    }
     if (options.verbose) {
       std::cout << "stage " << (stage + 1) << " " << kStageNames[stage] << ": " << pages.numPages() << " pages"
                 << std::endl;
@@ -379,8 +385,9 @@ bool ConsoleBatch::writeReport(const QString& reportFile) const {
   // Layout detector results (only with a model; kept in memory, not in the project).
   std::map<QString, QJsonObject> layoutByKey;
   for (const PageInfo& page : m_pages->toPageSequence(PAGE_VIEW)) {
-    if (const auto layout = m_stages->selectContentFilter()->layoutResult(page.id())) {
-      layoutByKey[page.imageId().filePath() + "|" + page.id().subPageAsString()] = layout->toJson();
+    const QJsonObject layout = m_stages->selectContentFilter()->layoutReport(page.id());
+    if (!layout.isEmpty()) {
+      layoutByKey[page.imageId().filePath() + "|" + page.id().subPageAsString()] = layout;
     }
   }
   for (const QString& id : order) {

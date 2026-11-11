@@ -154,37 +154,29 @@ FilterResultPtr Task::process(const TaskStatus& status, const FilterData& data) 
     }
   }
 
-  OptionsWidget::UiData uiData;
-  uiData.setSizeCalc(physSizeCalc);
-  uiData.setContentRect(newParams.contentRect());
-  uiData.setPageRect(newParams.pageRect());
-  uiData.setDependencies(deps);
-  uiData.setContentDetectionMode(newParams.contentDetectionMode());
-  uiData.setPageDetectionMode(newParams.pageDetectionMode());
-  uiData.setFineTuneCornersEnabled(newParams.isFineTuningEnabled());
-
-  m_settings->setPageParams(m_pageId, newParams);
-
   status.throwIfCancelled();
 
+  const AutoManualMode mode = newParams.contentDetectionMode();
+  // The automatic content box: just found, or kept from before (Params::autoContentRect while
+  // the layout toggles change the content box; else the content box itself).
+  QRectF autoBox;
+  if (mode == MODE_AUTO) {
+    const bool justFound = needUpdateContentBox;
+    autoBox = (!justFound && newParams.autoContentRect()) ? *newParams.autoContentRect() : newParams.contentRect();
+  }
+
   // Layout detector (only with a model configured): page numbers, tabs, headers, marginalia.
-  // Reported and shown; the content box is not changed.
   std::shared_ptr<const LayoutResult> layout;
   if (const std::shared_ptr<LayoutDetector> detector = LayoutDetector::instance()) {
     layout = m_settings->layoutResult(m_pageId);
-    const int mode = newParams.contentDetectionMode();
-    if (!layout || !layout->matches(data.xform(), newParams.pageRect(), newParams.contentRect(), mode)) {
+    if (!layout || !layout->matches(data.xform(), newParams.pageRect(), detector->modelSha256())
+        || (mode == MODE_AUTO && layout->autoBox != autoBox)) {
       // The side-strip tab rule needs the automatic content box, whatever the page's mode.
-      const QRectF autoBox = (mode == MODE_AUTO)
-                                 ? newParams.contentRect()
-                                 : ContentBoxFinder::findContentBox(status, data, newParams.pageRect(), nullptr);
+      const QRectF tabRuleBox = (mode == MODE_AUTO)
+                                    ? autoBox
+                                    : ContentBoxFinder::findContentBox(status, data, newParams.pageRect(), nullptr);
       try {
-        const std::shared_ptr<LayoutResult> result
-            = detector->analyze(data.origImage(), data.xform(), newParams.pageRect(), autoBox);
-        result->pageRect = newParams.pageRect();
-        result->contentRect = newParams.contentRect();
-        result->contentMode = mode;
-        layout = result;
+        layout = detector->analyze(data.origImage(), data.xform(), newParams.pageRect(), tabRuleBox);
         m_settings->setLayoutResult(m_pageId, layout);
       } catch (const std::exception& e) {
         std::cerr << "layout detector: " << m_pageId.imageId().filePath().toStdString() << ": " << e.what()
@@ -194,6 +186,42 @@ FilterResultPtr Task::process(const TaskStatus& status, const FilterData& data) 
     }
     status.throwIfCancelled();
   }
+
+  // Layout toggles: only the automatic content box is changed (a box set by hand never is).
+  if (mode == MODE_AUTO) {
+    const unsigned include = newParams.layoutInclude();
+    if (include == 0) {
+      if (newParams.autoContentRect()) {  // toggles switched off: back to the automatic box
+        newParams.setContentRect(autoBox);
+        newParams.setContentSizeMM(physSizeCalc.sizeMM(autoBox));
+        newParams.setAutoContentRect(std::nullopt);
+      }
+    } else {
+      newParams.setAutoContentRect(autoBox);
+      // Without a model (or if it failed) the content box stays as it is.
+      if (layout) {
+        const layout::FinalBox fb = layout->finalBox(autoBox, include, pageSideOf(m_pageId));
+        const QRectF contentRect = fb.box ? layoutBoxToRect(*fb.box) : QRectF();
+        newParams.setContentRect(contentRect);
+        newParams.setContentSizeMM(physSizeCalc.sizeMM(contentRect));
+      }
+    }
+  }
+
+  OptionsWidget::UiData uiData;
+  uiData.setSizeCalc(physSizeCalc);
+  uiData.setContentRect(newParams.contentRect());
+  uiData.setPageRect(newParams.pageRect());
+  uiData.setDependencies(deps);
+  uiData.setContentDetectionMode(newParams.contentDetectionMode());
+  uiData.setPageDetectionMode(newParams.pageDetectionMode());
+  uiData.setFineTuneCornersEnabled(newParams.isFineTuningEnabled());
+  uiData.setLayoutInclude(newParams.layoutInclude());
+  uiData.setAutoContentRect(newParams.autoContentRect());
+
+  m_settings->setPageParams(m_pageId, newParams);
+
+  status.throwIfCancelled();
 
   if (m_nextTask) {
     return m_nextTask->process(status, FilterData(data, data.xform()), uiData.pageRect(), uiData.contentRect());

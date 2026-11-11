@@ -12,6 +12,7 @@
 #include <QSizeF>
 #include <list>
 #include <memory>
+#include <optional>
 
 #include "Dependencies.h"
 #include "FilterOptionsWidget.h"
@@ -62,6 +63,14 @@ class OptionsWidget : public FilterOptionsWidget, public UnitsListener, private 
 
     AutoManualMode pageDetectionMode() const;
 
+    unsigned layoutInclude() const { return m_layoutInclude; }
+
+    void setLayoutInclude(unsigned flags) { m_layoutInclude = flags; }
+
+    const std::optional<QRectF>& autoContentRect() const { return m_autoContentRect; }
+
+    void setAutoContentRect(const std::optional<QRectF>& rect) { m_autoContentRect = rect; }
+
    private:
     QRectF m_contentRect;  // In virtual image coordinates.
     QRectF m_pageRect;
@@ -70,6 +79,8 @@ class OptionsWidget : public FilterOptionsWidget, public UnitsListener, private 
     AutoManualMode m_contentDetectionMode;
     AutoManualMode m_pageDetectionMode;
     bool m_fineTuneCornersEnabled;
+    unsigned m_layoutInclude = 0;
+    std::optional<QRectF> m_autoContentRect;
   };
 
 
@@ -109,6 +120,8 @@ class OptionsWidget : public FilterOptionsWidget, public UnitsListener, private 
 
   void fineTuningChanged(bool checked);
 
+  void layoutIncludeChanged();
+
   void dimensionsChangedLocally(double);
 
  private:
@@ -117,6 +130,8 @@ class OptionsWidget : public FilterOptionsWidget, public UnitsListener, private 
   void updatePageModeIndication(AutoManualMode mode);
 
   void updatePageDetectOptionsDisplay();
+
+  void updateLayoutIncludeDisplay();
 
   void commitCurrentParams();
 

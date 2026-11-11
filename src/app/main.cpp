@@ -13,8 +13,10 @@
 #include <QGuiApplication>
 #include <QSettings>
 #include <QStringList>
+#include <iostream>
 
 #include "MainWindow.h"
+#include "filters/select_content/LayoutDetector.h"
 
 int main(int argc, char* argv[]) {
 #if QT_VERSION_MAJOR == 5
@@ -58,6 +60,15 @@ int main(int argc, char* argv[]) {
     ColorSchemeManager::instance().setColorScheme(*scheme);
   }
   IconProvider::getInstance().setIconPack(StyledIconPack::createDefault());
+
+  // Layout model of "Select Content": the settings' one, else $SCANTAILOR_LAYOUT_MODEL.
+  {
+    const QString error = select_content::LayoutDetector::configureFromSettings(
+        ApplicationSettings::getInstance().getLayoutModelPath(), ApplicationSettings::getInstance().getLayoutModelSha256());
+    if (!error.isEmpty()) {
+      std::cerr << "scantailor: layout detector off: " << error.toStdString() << std::endl;
+    }
+  }
 
   auto* mainWnd = new MainWindow();
   mainWnd->setAttribute(Qt::WA_DeleteOnClose);

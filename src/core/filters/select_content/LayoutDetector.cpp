@@ -18,6 +18,7 @@
 #include <stdexcept>
 
 #include "ImageTransformation.h"
+#include "PageId.h"
 
 #ifdef HAVE_LAYOUT_DETECTOR
 #include <onnxruntime_cxx_api.h>
@@ -38,21 +39,41 @@ QJsonObject rectJson(const QRectF& r) {
   return o;
 }
 
-QRectF toRect(const layout::Box& b) {
-  return QRectF(QPointF(b.x0, b.y0), QPointF(b.x1, b.y1));
-}
-
 double round4(double v) {
   return std::round(v * 1e4) / 1e4;
 }
 }  // namespace
 
-bool LayoutResult::matches(const ImageTransformation& xf,
-                           const QRectF& page,
-                           const QRectF& content,
-                           const int mode) const {
-  return xform == xf.transform() && cropArea == xf.resultingPreCropArea() && pageRect == page
-         && contentRect == content && contentMode == mode;
+QRectF layoutBoxToRect(const layout::Box& b) {
+  return QRectF(QPointF(b.x0, b.y0), QPointF(b.x1, b.y1));
+}
+
+std::optional<layout::Box> rectToLayoutBox(const QRectF& r) {
+  if (!r.isValid()) {
+    return std::nullopt;
+  }
+  return layout::Box{r.left(), r.top(), r.right(), r.bottom()};
+}
+
+layout::PageSide pageSideOf(const PageId& pageId) {
+  switch (pageId.subPage()) {
+    case PageId::LEFT_PAGE:
+      return layout::PageSide::Left;
+    case PageId::RIGHT_PAGE:
+      return layout::PageSide::Right;
+    default:
+      return layout::PageSide::Single;
+  }
+}
+
+bool LayoutResult::matches(const ImageTransformation& xf, const QRectF& page, const QString& sha) const {
+  return xform == xf.transform() && cropArea == xf.resultingPreCropArea() && pageRect == page && modelSha256 == sha;
+}
+
+layout::FinalBox LayoutResult::finalBox(const QRectF& autoRect, const unsigned flags, const layout::PageSide side) const {
+  const layout::Box page{pageRect.left(), pageRect.top(), pageRect.right(), pageRect.bottom()};
+  const layout::Box pap{paper.left(), paper.top(), paper.right(), paper.bottom()};
+  return layout::finalBox(rectToLayoutBox(autoRect), page, elements, detections, pap, flags, side, frameDpi);
 }
 
 QJsonObject LayoutResult::toJson() const {
@@ -67,8 +88,8 @@ QJsonObject LayoutResult::toJson() const {
     j.insert("type", e.type);
     j.insert("raw", e.raw);
     j.insert("confidence", round4(e.score));
-    j.insert("rect", rectJson(toRect(e.box)));
-    j.insert("modelRect", rectJson(toRect(e.modelBox)));
+    j.insert("rect", rectJson(layoutBoxToRect(e.box)));
+    j.insert("modelRect", rectJson(layoutBoxToRect(e.modelBox)));
     els.append(j);
   }
   o.insert("elements", els);
@@ -83,7 +104,7 @@ QJsonObject LayoutResult::toJson() const {
       j.insert("classRule", d.clsRule);
     }
     j.insert("confidence", round4(d.score));
-    j.insert("rect", rectJson(toRect(d.box)));
+    j.insert("rect", rectJson(layoutBoxToRect(d.box)));
     dets.append(j);
   }
   o.insert("detections", dets);
@@ -210,6 +231,29 @@ std::shared_ptr<LayoutDetector> LayoutDetector::instance() {
   return g_instance;
 }
 
+void LayoutDetector::unload() {
+  const QMutexLocker locker(&g_instanceMutex);
+  g_instance.reset();
+  g_envChecked = true;
+}
+
+QString LayoutDetector::configureFromSettings(const QString& modelPath, const QString& expectedSha256) {
+  if (modelPath.isEmpty()) {
+    {
+      const QMutexLocker locker(&g_instanceMutex);
+      g_instance.reset();
+      g_envChecked = false;  // instance() reads the environment
+    }
+    instance();
+    return QString();
+  }
+  const QString error = configure(modelPath, expectedSha256);
+  if (!error.isEmpty()) {
+    unload();
+  }
+  return error;
+}
+
 std::shared_ptr<LayoutResult> LayoutDetector::analyze(const QImage& image,
                                                       const ImageTransformation& xform,
                                                       const QRectF& pageRect,
@@ -310,9 +354,12 @@ std::shared_ptr<LayoutResult> LayoutDetector::analyze(const QImage& image,
   }
 
   result->xform = xform.transform();
+  result->pageRect = pageRect;
+  result->modelSha256 = m_sha256;
+  result->frameDpi = frameDpi;
   result->cropArea = xform.resultingPreCropArea();
   result->autoBox = autoBox;
-  result->paper = toRect(paper.scaled(1.0 / r));
+  result->paper = layoutBoxToRect(paper.scaled(1.0 / r));
   result->detections = std::move(dets);
   result->elements = std::move(elements);
   result->seconds = timer.elapsed() / 1000.0;

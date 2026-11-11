@@ -54,6 +54,8 @@ const QString ApplicationSettings::CURRENT_PROFILE_KEY = "current_profile";
 const QString ApplicationSettings::SHOW_CANCELING_SELECTION_QUESTION_KEY = "selection_canceling_question";
 const QString ApplicationSettings::DEFAULT_ZONE_CREATION_MODE_KEY = "default_zone_creation_mode";
 const QString ApplicationSettings::OUTPUT_SHOW_GUIDES_KEY = "output_show_guides";
+const QString ApplicationSettings::LAYOUT_MODEL_PATH_KEY = "layout_model_path";
+const QString ApplicationSettings::LAYOUT_MODEL_SHA256_KEY = "layout_model_sha256";
 const int ApplicationSettings::DEFAULT_ZONE_CREATION_MODE = 0;  // POLYGONAL
 const bool ApplicationSettings::DEFAULT_OUTPUT_SHOW_GUIDES = false;
 
@@ -257,4 +259,20 @@ bool ApplicationSettings::isOutputShowGuidesEnabled() const {
 
 void ApplicationSettings::setOutputShowGuidesEnabled(bool enabled) {
   m_settings.setValue(getKey(OUTPUT_SHOW_GUIDES_KEY), enabled);
+}
+
+QString ApplicationSettings::getLayoutModelPath() const {
+  return m_settings.value(getKey(LAYOUT_MODEL_PATH_KEY), QString()).toString();
+}
+
+void ApplicationSettings::setLayoutModelPath(const QString& path) {
+  m_settings.setValue(getKey(LAYOUT_MODEL_PATH_KEY), path);
+}
+
+QString ApplicationSettings::getLayoutModelSha256() const {
+  return m_settings.value(getKey(LAYOUT_MODEL_SHA256_KEY), QString()).toString();
+}
+
+void ApplicationSettings::setLayoutModelSha256(const QString& sha256) {
+  m_settings.setValue(getKey(LAYOUT_MODEL_SHA256_KEY), sha256);
 }

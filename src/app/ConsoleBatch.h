@@ -35,6 +35,9 @@ class ConsoleBatch {
     int endFilter = 5;
     int threads = 1;
     bool verbose = false;
+    // Layout toggles (select_content::layout::IncludeFlag) set on every page before stage 4;
+    // -1 = each page keeps its own.
+    int layoutInclude = -1;
   };
 
   /**

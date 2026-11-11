@@ -23,6 +23,11 @@ class SettingsDialog : public QDialog {
 
   void blackOnWhiteDetectionToggled(bool checked);
 
+  void browseLayoutModel();
+
+ private:
+  void updateLayoutModelStatus();
+
  private:
   Ui::SettingsDialog ui;
 };

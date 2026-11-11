@@ -12,7 +12,10 @@
 
 #include <utility>
 
+#include <QJsonArray>
+
 #include "CacheDrivenTask.h"
+#include "LayoutDetector.h"
 #include "FilterUiInterface.h"
 #include "OptionsWidget.h"
 #include "OrderByHeightProvider.h"
@@ -161,5 +164,61 @@ OptionsWidget* Filter::optionsWidget() {
 
 std::shared_ptr<const LayoutResult> Filter::layoutResult(const PageId& pageId) const {
   return m_settings->layoutResult(pageId);
+}
+QJsonObject Filter::layoutReport(const PageId& pageId) const {
+  const std::shared_ptr<const LayoutResult> layout = m_settings->layoutResult(pageId);
+  if (!layout) {
+    return QJsonObject();
+  }
+  QJsonObject out = layout->toJson();
+  const std::unique_ptr<Params> params(m_settings->getPageParams(pageId));
+  if (!params) {
+    return out;
+  }
+  const auto rectJson = [](const QRectF& r) {
+    QJsonObject o;
+    o.insert("x", r.x());
+    o.insert("y", r.y());
+    o.insert("width", r.width());
+    o.insert("height", r.height());
+    return o;
+  };
+  QJsonObject content;
+  const unsigned flags = params->layoutInclude();
+  content.insert("include", QJsonArray::fromStringList(layout::includeListNames(flags)));
+  content.insert("mode", autoManualModeToString(params->contentDetectionMode()));
+  // Applied only to an automatic content box (a box set by hand is never changed).
+  const bool applied = flags != 0 && params->contentDetectionMode() == MODE_AUTO;
+  content.insert("applied", applied);
+  if (applied) {
+    const QRectF autoBox = params->autoContentRect() ? *params->autoContentRect() : params->contentRect();
+    const layout::FinalBox fb = layout->finalBox(autoBox, flags, pageSideOf(pageId));
+    QJsonArray included;
+    for (const int i : fb.included) {
+      QJsonObject e;
+      e.insert("type", layout->elements[i].type);
+      e.insert("rect", rectJson(layoutBoxToRect(layout->elements[i].box)));
+      included.append(e);
+    }
+    content.insert("included", included);
+    content.insert("cleaned", QJsonArray::fromStringList(fb.cleaned));
+    if (autoBox.isValid()) {
+      content.insert("autoBox", rectJson(autoBox));
+    }
+  }
+  if (params->contentRect().isValid()) {
+    content.insert("box", rectJson(params->contentRect()));
+  }
+  out.insert("content", content);
+  return out;
+}
+
+void Filter::setLayoutInclude(const PageId& pageId, const unsigned flags) {
+  std::unique_ptr<Params> params(m_settings->getPageParams(pageId));
+  if (!params) {
+    return;
+  }
+  params->setLayoutInclude(flags);
+  m_settings->setPageParams(pageId, *params);
 }
 }  // namespace select_content

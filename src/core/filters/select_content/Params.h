@@ -9,6 +9,7 @@
 #include <QRectF>
 #include <QSizeF>
 #include <cmath>
+#include <optional>
 
 #include "Dependencies.h"
 #include "Margins.h"
@@ -66,6 +67,24 @@ class Params {
 
   void setFineTuneCornersEnabled(bool fineTuneCorners);
 
+  /**
+   * Layout detector toggles (layout::IncludeFlag): what the content box takes in beyond the
+   * automatic box. 0 (the default) = the automatic box unchanged. They act only in the
+   * automatic content mode and only with a layout model.
+   */
+  unsigned layoutInclude() const;
+
+  void setLayoutInclude(unsigned flags);
+
+  /**
+   * The automatic content box (ContentBoxFinder) when the toggles have made the content box
+   * differ from it; empty while no toggle is on. Kept so that the toggles can be changed or
+   * re-applied without finding the box again, and for the side-strip tab rule.
+   */
+  const std::optional<QRectF>& autoContentRect() const;
+
+  void setAutoContentRect(const std::optional<QRectF>& rect);
+
  private:
   QRectF m_contentRect;
   QRectF m_pageRect;
@@ -74,6 +93,8 @@ class Params {
   AutoManualMode m_contentDetectionMode;
   AutoManualMode m_pageDetectionMode;
   bool m_fineTuneCorners;
+  unsigned m_layoutInclude = 0;
+  std::optional<QRectF> m_autoContentRect;
 };
 
 
@@ -131,6 +152,22 @@ inline void Params::setDependencies(const Dependencies& deps) {
 
 inline void Params::setFineTuneCornersEnabled(bool fineTuneCorners) {
   m_fineTuneCorners = fineTuneCorners;
+}
+
+inline unsigned Params::layoutInclude() const {
+  return m_layoutInclude;
+}
+
+inline void Params::setLayoutInclude(unsigned flags) {
+  m_layoutInclude = flags;
+}
+
+inline const std::optional<QRectF>& Params::autoContentRect() const {
+  return m_autoContentRect;
+}
+
+inline void Params::setAutoContentRect(const std::optional<QRectF>& rect) {
+  m_autoContentRect = rect;
 }
 }  // namespace select_content
 #endif  // ifndef SCANTAILOR_SELECT_CONTENT_PARAMS_H_

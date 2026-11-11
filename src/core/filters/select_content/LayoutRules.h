@@ -5,6 +5,7 @@
 #define SCANTAILOR_SELECT_CONTENT_LAYOUTRULES_H_
 
 #include <QString>
+#include <QStringList>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -122,6 +123,71 @@ std::vector<Element> selectElements(const std::vector<Detection>& dets,
                                     const Plane8& gray,
                                     double dpi,
                                     const Box& paper);
+
+/**
+ * What the content box takes in beyond the automatic box: the per-page toggles of the
+ * "Select Content" stage (a bit set; 0 = the automatic box unchanged).
+ */
+enum IncludeFlag : unsigned {
+  kIncludePageNumbers = 1u << 0,
+  kIncludeTabs = 1u << 1,
+  kIncludeHeaders = 1u << 2,
+  kIncludeMarginalia = 1u << 3,
+  kCleanPaperEdge = 1u << 4,
+};
+
+constexpr unsigned kIncludeAll
+    = kIncludePageNumbers | kIncludeTabs | kIncludeHeaders | kIncludeMarginalia | kCleanPaperEdge;
+
+/** The flag of an element type (page_number, tab, header, marginalia); 0 for anything else. */
+unsigned includeFlagOfType(const QString& type);
+
+/**
+ * "page-numbers,tabs,headers,marginalia,clean-edge" (any subset, any order; "none" = 0; "all")
+ * -> flags. Unknown names set \p error and return 0.
+ */
+unsigned parseIncludeList(const QString& list, QString* error);
+
+/** Flags -> the names of parseIncludeList, in that order. */
+QStringList includeListNames(unsigned flags);
+
+enum class PageSide { Single, Left, Right };
+
+constexpr double kEdgeTouchMm = 3;    // a box side this close to the paper edge (or beyond) "touches" it
+constexpr double kEdgePadMm = 1;      // added to the model's extent (its boxes end short of the print)
+constexpr double kEdgeSeenScore = 0.5;  // detections counted for the extent
+
+/** Result of finalBox(). */
+struct FinalBox {
+  std::optional<Box> box;     // empty: no content (no automatic box, nothing included)
+  std::vector<int> included;  // indices of the included elements
+  QStringList cleaned;        // the paper-edge cuts made ("outer to tab", "left to model extent", ...)
+};
+
+/**
+ * The content box with the toggles \p flags (a port of scantailor-cli's ml/apply_boxes.py):
+ *
+ * 1. automatic box U every element whose type is included, each clipped to \p pageRect
+ *    (ml/score.final_with_elements);
+ * 2. with kCleanPaperEdge (apply_boxes.clean), only ever shrinking:
+ *    - outer side of a left / right page that has a tab (the tab of highest score): cut at the
+ *      tab's outer edge;
+ *    - every side within kEdgeTouchMm of the paper edge or beyond it: cut back to the extent of
+ *      everything the model saw (detections >= kEdgeSeenScore of any class, body text included,
+ *      and all elements, included or not) + kEdgePadMm; not the outer side of a tab page.
+ *    A cut that leaves no area is dropped (the box before the cuts is kept).
+ *
+ * The paper-edge cut uses every element, whatever is included. All boxes in frame px of
+ * \p frameDpi.
+ */
+FinalBox finalBox(const std::optional<Box>& autoBox,
+                  const Box& pageRect,
+                  const std::vector<Element>& elements,
+                  const std::vector<Detection>& detections,
+                  const Box& paper,
+                  unsigned flags,
+                  PageSide side,
+                  double frameDpi);
 }  // namespace layout
 }  // namespace select_content
 #endif  // SCANTAILOR_SELECT_CONTENT_LAYOUTRULES_H_

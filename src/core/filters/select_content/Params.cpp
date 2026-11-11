@@ -3,8 +3,27 @@
 
 #include "Params.h"
 
+#include "LayoutRules.h"
+
 #include "XmlMarshaller.h"
 #include "XmlUnmarshaller.h"
+
+namespace {
+// Layout detector toggles: one attribute each, written only when on (old projects and projects
+// without toggles stay as they were; a missing attribute is off).
+struct IncludeAttr {
+  unsigned flag;
+  const char* name;
+};
+
+const IncludeAttr kIncludeAttrs[] = {
+    {select_content::layout::kIncludePageNumbers, "includePageNumbers"},
+    {select_content::layout::kIncludeTabs, "includeTabs"},
+    {select_content::layout::kIncludeHeaders, "includeHeaders"},
+    {select_content::layout::kIncludeMarginalia, "includeMarginalia"},
+    {select_content::layout::kCleanPaperEdge, "cleanPaperEdge"},
+};
+}  // namespace
 
 namespace select_content {
 Params::Params(const Dependencies& deps)
@@ -32,7 +51,17 @@ Params::Params(const QDomElement& filterEl)
       m_deps(filterEl.namedItem("dependencies").toElement()),
       m_contentDetectionMode(stringToAutoManualMode(filterEl.attribute("contentDetectionMode"))),
       m_pageDetectionMode(stringToAutoManualMode(filterEl.attribute("pageDetectionMode"))),
-      m_fineTuneCorners(filterEl.attribute("fineTuneCorners") == "1") {}
+      m_fineTuneCorners(filterEl.attribute("fineTuneCorners") == "1") {
+  for (const IncludeAttr& a : kIncludeAttrs) {
+    if (filterEl.attribute(a.name) == "1") {
+      m_layoutInclude |= a.flag;
+    }
+  }
+  const QDomElement autoEl = filterEl.namedItem("auto-content-rect").toElement();
+  if (!autoEl.isNull()) {
+    m_autoContentRect = XmlUnmarshaller::rectF(autoEl);
+  }
+}
 
 Params::~Params() = default;
 
@@ -43,10 +72,18 @@ QDomElement Params::toXml(QDomDocument& doc, const QString& name) const {
   el.setAttribute("contentDetectionMode", autoManualModeToString(m_contentDetectionMode));
   el.setAttribute("pageDetectionMode", autoManualModeToString(m_pageDetectionMode));
   el.setAttribute("fineTuneCorners", m_fineTuneCorners ? "1" : "0");
+  for (const IncludeAttr& a : kIncludeAttrs) {
+    if (m_layoutInclude & a.flag) {
+      el.setAttribute(a.name, "1");
+    }
+  }
   el.appendChild(marshaller.rectF(m_contentRect, "content-rect"));
   el.appendChild(marshaller.rectF(m_pageRect, "page-rect"));
   el.appendChild(marshaller.sizeF(m_contentSizeMM, "content-size-mm"));
   el.appendChild(m_deps.toXml(doc, "dependencies"));
+  if (m_autoContentRect) {
+    el.appendChild(marshaller.rectF(*m_autoContentRect, "auto-content-rect"));
+  }
   return el;
 }
 }  // namespace select_content

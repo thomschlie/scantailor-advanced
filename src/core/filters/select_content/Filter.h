@@ -5,6 +5,7 @@
 #define SCANTAILOR_SELECT_CONTENT_FILTER_H_
 
 #include <QCoreApplication>
+#include <QJsonObject>
 #include <memory>
 #include <vector>
 
@@ -71,6 +72,16 @@ class Filter : public AbstractFilter {
 
   /** What the layout detector found on the page in this session (null if it did not run). */
   std::shared_ptr<const LayoutResult> layoutResult(const PageId& pageId) const;
+
+  /**
+   * For the CLI report: layoutResult() as JSON plus "content": the page's layout toggles, the
+   * included elements, the paper-edge cuts, the automatic and the final box. Empty if the
+   * detector did not run on the page.
+   */
+  QJsonObject layoutReport(const PageId& pageId) const;
+
+  /** Sets the layout toggles (layout::IncludeFlag) of a page that has settings. */
+  void setLayoutInclude(const PageId& pageId, unsigned flags);
 
  private:
   void writePageSettings(QDomDocument& doc, QDomElement& filterEl, const PageId& pageId, int numericId) const;
