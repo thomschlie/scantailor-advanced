@@ -15,6 +15,7 @@
 #include "FilterData.h"
 #include "FilterUiInterface.h"
 #include "ImageView.h"
+#include "LayoutDetector.h"
 #include "OptionsWidget.h"
 #include "PageFinder.h"
 #include "TaskStatus.h"
@@ -32,6 +33,7 @@ class Task::UiUpdater : public FilterResult {
             const ImageTransformation& xform,
             const ContentMask& contentMask,
             const OptionsWidget::UiData& uiData,
+            std::shared_ptr<const LayoutResult> layout,
             bool batch);
 
   void updateUI(FilterUiInterface* ui) override;
@@ -47,6 +49,7 @@ class Task::UiUpdater : public FilterResult {
   ContentMask m_contentMask;
   ImageTransformation m_xform;
   OptionsWidget::UiData m_uiData;
+  std::shared_ptr<const LayoutResult> m_layout;
   bool m_batchProcessing;
 };
 
@@ -164,12 +167,40 @@ FilterResultPtr Task::process(const TaskStatus& status, const FilterData& data) 
 
   status.throwIfCancelled();
 
+  // Layout detector (only with a model configured): page numbers, tabs, headers, marginalia.
+  // Reported and shown; the content box is not changed.
+  std::shared_ptr<const LayoutResult> layout;
+  if (const std::shared_ptr<LayoutDetector> detector = LayoutDetector::instance()) {
+    layout = m_settings->layoutResult(m_pageId);
+    const int mode = newParams.contentDetectionMode();
+    if (!layout || !layout->matches(data.xform(), newParams.pageRect(), newParams.contentRect(), mode)) {
+      // The side-strip tab rule needs the automatic content box, whatever the page's mode.
+      const QRectF autoBox = (mode == MODE_AUTO)
+                                 ? newParams.contentRect()
+                                 : ContentBoxFinder::findContentBox(status, data, newParams.pageRect(), nullptr);
+      try {
+        const std::shared_ptr<LayoutResult> result
+            = detector->analyze(data.origImage(), data.xform(), newParams.pageRect(), autoBox);
+        result->pageRect = newParams.pageRect();
+        result->contentRect = newParams.contentRect();
+        result->contentMode = mode;
+        layout = result;
+        m_settings->setLayoutResult(m_pageId, layout);
+      } catch (const std::exception& e) {
+        std::cerr << "layout detector: " << m_pageId.imageId().filePath().toStdString() << ": " << e.what()
+                  << std::endl;
+        layout.reset();
+      }
+    }
+    status.throwIfCancelled();
+  }
+
   if (m_nextTask) {
     return m_nextTask->process(status, FilterData(data, data.xform()), uiData.pageRect(), uiData.contentRect());
   } else {
     return std::make_shared<UiUpdater>(m_filter, m_pageId, std::move(m_dbg), data.origImage(), data.xform(),
                                        ContentMask(data.grayImageBlackOnWhite(), data.xform(), status), uiData,
-                                       m_batchProcessing);
+                                       layout, m_batchProcessing);
   }
 }  // Task::process
 
@@ -182,6 +213,7 @@ Task::UiUpdater::UiUpdater(std::shared_ptr<Filter> filter,
                            const ImageTransformation& xform,
                            const ContentMask& contentMask,
                            const OptionsWidget::UiData& uiData,
+                           std::shared_ptr<const LayoutResult> layout,
                            const bool batch)
     : m_filter(std::move(filter)),
       m_pageId(pageId),
@@ -191,6 +223,7 @@ Task::UiUpdater::UiUpdater(std::shared_ptr<Filter> filter,
       m_contentMask(contentMask),
       m_xform(xform),
       m_uiData(uiData),
+      m_layout(std::move(layout)),
       m_batchProcessing(batch) {}
 
 void Task::UiUpdater::updateUI(FilterUiInterface* ui) {
@@ -207,6 +240,9 @@ void Task::UiUpdater::updateUI(FilterUiInterface* ui) {
 
   auto* view = new ImageView(m_image, m_downscaledImage, m_contentMask, m_xform, m_uiData.contentRect(),
                              m_uiData.pageRect(), m_uiData.pageDetectionMode() != MODE_DISABLED);
+  if (m_layout) {
+    view->setLayoutElements(m_layout->elements);
+  }
   ui->setImageWidget(view, ui->TRANSFER_OWNERSHIP, m_dbg.get());
 
   QObject::connect(view, SIGNAL(manualContentRectSet(const QRectF&)), optWidget,

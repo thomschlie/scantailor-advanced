@@ -159,4 +159,7 @@ OptionsWidget* Filter::optionsWidget() {
   return m_optionsWidget.get();
 }
 
+std::shared_ptr<const LayoutResult> Filter::layoutResult(const PageId& pageId) const {
+  return m_settings->layoutResult(pageId);
+}
 }  // namespace select_content

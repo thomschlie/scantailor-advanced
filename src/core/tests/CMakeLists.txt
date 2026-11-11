@@ -4,6 +4,7 @@ set(sources
     TestDeskewParams.cpp
     TestObliqueFinder.cpp
     TestImageId.cpp
+    TestLayoutRules.cpp
     TestMargins.cpp
     TestPageId.cpp
     TestPageRange.cpp

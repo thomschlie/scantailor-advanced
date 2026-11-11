@@ -29,6 +29,7 @@ class OptionsWidget;
 class Task;
 class CacheDrivenTask;
 class Settings;
+struct LayoutResult;
 
 class Filter : public AbstractFilter {
   DECLARE_NON_COPYABLE(Filter)
@@ -67,6 +68,9 @@ class Filter : public AbstractFilter {
   std::shared_ptr<CacheDrivenTask> createCacheDrivenTask(std::shared_ptr<page_layout::CacheDrivenTask> nextTask);
 
   OptionsWidget* optionsWidget();
+
+  /** What the layout detector found on the page in this session (null if it did not run). */
+  std::shared_ptr<const LayoutResult> layoutResult(const PageId& pageId) const;
 
  private:
   void writePageSettings(QDomDocument& doc, QDomElement& filterEl, const PageId& pageId, int numericId) const;

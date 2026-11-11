@@ -17,6 +17,9 @@
 #include "PageInfo.h"
 #include "PageSequence.h"
 #include "ProjectPages.h"
+#include "StageSequence.h"
+#include "filters/select_content/Filter.h"
+#include "filters/select_content/LayoutDetector.h"
 
 namespace {
 QJsonObject attributesOf(const QDomElement& el) {
@@ -102,12 +105,23 @@ bool writeBatchReport(const BatchProcessor& batch, const QString& reportFile) {
     outputByKey[page.imageId().filePath() + "|" + page.id().subPageAsString()]
         = batch.outputFileNameGenerator().filePathFor(page.id());
   }
+  // Layout detector results (only with a model; kept in memory, not in the project).
+  std::map<QString, QJsonObject> layoutByKey;
+  for (const PageInfo& page : batch.pages()->toPageSequence(PAGE_VIEW)) {
+    if (const auto layout = batch.stages()->selectContentFilter()->layoutResult(page.id())) {
+      layoutByKey[page.imageId().filePath() + "|" + page.id().subPageAsString()] = layout->toJson();
+    }
+  }
   for (const QString& id : order) {
     QJsonObject& obj = pages[id].obj;
     const QString key = obj.value("image").toString() + "|" + obj.value("subPage").toString();
     const auto it = outputByKey.find(key);
     if (it != outputByKey.end()) {
       obj.insert("output", it->second);
+    }
+    const auto lt = layoutByKey.find(key);
+    if (lt != layoutByKey.end()) {
+      obj.insert("layout", lt->second);
     }
   }
 
@@ -137,6 +151,13 @@ bool writeBatchReport(const BatchProcessor& batch, const QString& reportFile) {
   }
   QJsonObject top;
   top.insert("outputDirectory", batch.outputFileNameGenerator().outDir());
+  if (const auto detector = select_content::LayoutDetector::instance()) {
+    QJsonObject model;
+    model.insert("path", detector->modelPath());
+    model.insert("sha256", detector->modelSha256());
+    model.insert("scoreThreshold", select_content::LayoutDetector::kScoreThreshold);
+    top.insert("layoutModel", model);
+  }
   top.insert("pages", arr);
 
   QFile out(reportFile);

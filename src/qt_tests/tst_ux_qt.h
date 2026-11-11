@@ -14,6 +14,7 @@ class TestUxQt : public QObject {
   void testLineEditAcceptsInput();
   void testCollapsibleGroupBoxStateAndSignal();
   void testErrorWidgetCreation();
+  void testLayoutOverlayDrawn();
 };
 
 #endif

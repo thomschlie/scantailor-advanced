@@ -7,6 +7,7 @@
 
 #include "../../Utils.h"
 #include "AbstractRelinker.h"
+#include "LayoutDetector.h"
 #include "RelinkablePath.h"
 
 using namespace core;
@@ -31,6 +32,7 @@ void Settings::clear() {
   QMutexLocker locker(&m_mutex);
   m_pageParams.clear();
   m_deviationProvider.clear();
+  m_layoutResults.clear();
 }
 
 void Settings::performRelinking(const AbstractRelinker& relinker) {
@@ -100,4 +102,14 @@ const DeviationProvider<PageId>& Settings::deviationProvider() const {
   return m_deviationProvider;
 }
 
+void Settings::setLayoutResult(const PageId& pageId, std::shared_ptr<const LayoutResult> result) {
+  QMutexLocker locker(&m_mutex);
+  m_layoutResults[pageId] = std::move(result);
+}
+
+std::shared_ptr<const LayoutResult> Settings::layoutResult(const PageId& pageId) const {
+  QMutexLocker locker(&m_mutex);
+  const auto it = m_layoutResults.find(pageId);
+  return it == m_layoutResults.end() ? nullptr : it->second;
+}
 }  // namespace select_content
