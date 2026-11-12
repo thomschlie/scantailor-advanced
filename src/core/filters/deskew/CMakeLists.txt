@@ -14,6 +14,7 @@ set(sources
     CacheDrivenTask.cpp CacheDrivenTask.h
     Dependencies.cpp Dependencies.h
     ObliqueFinder.cpp ObliqueFinder.h
+    SkewFallback.cpp SkewFallback.h
     Params.cpp Params.h
     ApplyDialog.cpp ApplyDialog.h
     Utils.cpp Utils.h)

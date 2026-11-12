@@ -47,6 +47,14 @@ class Settings {
 
   bool algoContentBased() const;
 
+  /**
+   * Fallback estimator for pages on which SkewFinder has a low confidence, and the "uncertain"
+   * marking of pages (scantailor-cli issue #15). On by default; off = upstream behaviour (angle 0).
+   */
+  void setFallbackEnabled(bool enabled);
+
+  bool fallbackEnabled() const;
+
   void setPendingAutoOblique(const PageId& pageId, bool enabled);
 
   std::optional<bool> takePendingAutoOblique(const PageId& pageId);
@@ -58,6 +66,7 @@ class Settings {
   PerPageParams m_perPageParams;
   DeviationProvider<PageId> m_deviationProvider;
   bool m_algoContentBased;
+  bool m_fallbackEnabled;
   std::unordered_map<PageId, bool> m_pendingAutoOblique;
 };
 }  // namespace deskew

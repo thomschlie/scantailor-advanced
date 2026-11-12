@@ -7,6 +7,7 @@
 #include <foundation/Utils.h>
 
 #include <QDomDocument>
+#include <QStringList>
 
 using namespace foundation;
 
@@ -23,7 +24,57 @@ AutoManualMode obliqueModeFromXml(const QDomElement& deskewEl) {
   return deskewEl.attribute("mode") == "manual" ? MODE_MANUAL : MODE_AUTO;
 }
 
+AutoDiagnostics diagnosticsFromXml(const QDomElement& el) {
+  AutoDiagnostics d;
+  bool ok = false;
+  const double conf = el.attribute("confidence").toDouble(&ok);
+  if (ok) {
+    d.confidence = conf;
+  }
+  d.source = deskewSourceFromString(el.attribute("angle-source"));
+  const QStringList uncertain = el.attribute("uncertain").split(' ', Qt::SkipEmptyParts);
+  d.angleUncertain = uncertain.contains("angle");
+  d.obliqueUncertain = uncertain.contains("oblique");
+  const double rejected = el.attribute("rejected-oblique").toDouble(&ok);
+  if (ok && d.obliqueUncertain) {
+    d.rejectedOblique = rejected;
+  }
+  return d;
+}
+
 }  // namespace
+
+QString deskewSourceToString(const DeskewSource source) {
+  switch (source) {
+    case DeskewSource::FALLBACK:
+      return "fallback";
+    case DeskewSource::BEST_GUESS:
+      return "best-guess";
+    case DeskewSource::NO_TEXT:
+      return "no-text";
+    case DeskewSource::DISABLED:
+      return "low-confidence";
+    case DeskewSource::PRIMARY:
+      break;
+  }
+  return QString();
+}
+
+DeskewSource deskewSourceFromString(const QString& str) {
+  if (str == "fallback") {
+    return DeskewSource::FALLBACK;
+  }
+  if (str == "best-guess") {
+    return DeskewSource::BEST_GUESS;
+  }
+  if (str == "no-text") {
+    return DeskewSource::NO_TEXT;
+  }
+  if (str == "low-confidence") {
+    return DeskewSource::DISABLED;
+  }
+  return DeskewSource::PRIMARY;
+}
 
 Params::Params(const double deskewAngleDeg, const Dependencies& deps, const AutoManualMode deskewMode)
     : m_rotation{deskewAngleDeg, deskewMode}, m_oblique{0.0, MODE_AUTO}, m_deps(deps) {}
@@ -45,7 +96,8 @@ Params::Params(const QDomElement& deskewEl)
     : m_rotation{deskewEl.attribute("angle").toDouble(),
                  deskewEl.attribute("mode") == "manual" ? MODE_MANUAL : MODE_AUTO},
       m_oblique{deskewEl.attribute("oblique").toDouble(), obliqueModeFromXml(deskewEl)},
-      m_deps(deskewEl.namedItem("dependencies").toElement()) {}
+      m_deps(deskewEl.namedItem("dependencies").toElement()),
+      m_diag(diagnosticsFromXml(deskewEl)) {}
 
 Params::~Params() = default;
 
@@ -55,6 +107,27 @@ QDomElement Params::toXml(QDomDocument& doc, const QString& name) const {
   el.setAttribute("angle", Utils::doubleToString(m_rotation.angle));
   el.setAttribute("oblique", Utils::doubleToString(m_oblique.obliqueAngle));
   el.setAttribute("oblique-mode", m_oblique.mode == MODE_AUTO ? "auto" : "manual");
+  // Diagnostics of automatic angles only (issue #15); absent for manual angles and old projects.
+  if (const auto conf = confidence()) {
+    el.setAttribute("confidence", Utils::doubleToString(std::round(*conf * 1000.0) / 1000.0));
+  }
+  const QString source = deskewSourceToString(angleSource());
+  if (!source.isEmpty()) {
+    el.setAttribute("angle-source", source);
+  }
+  QStringList uncertain;
+  if (isAngleUncertain()) {
+    uncertain << "angle";
+  }
+  if (isObliqueUncertain()) {
+    uncertain << "oblique";
+    if (m_diag.rejectedOblique) {
+      el.setAttribute("rejected-oblique", Utils::doubleToString(std::round(*m_diag.rejectedOblique * 1000.0) / 1000.0));
+    }
+  }
+  if (!uncertain.isEmpty()) {
+    el.setAttribute("uncertain", uncertain.join(' '));
+  }
   el.appendChild(m_deps.toXml(doc, "dependencies"));
   return el;
 }

@@ -78,6 +78,10 @@ void SkewFinder::setResolutionRatio(const double ratio) {
 }
 
 Skew SkewFinder::findSkew(const BinaryImage& image) const {
+  return findSkew(image, nullptr);
+}
+
+Skew SkewFinder::findSkew(const BinaryImage& image, Skew* unrounded) const {
   if (image.isNull()) {
     throw std::invalid_argument("SkewFinder: null image was provided");
   }
@@ -115,6 +119,9 @@ Skew SkewFinder::findSkew(const BinaryImage& image) const {
     double confidence = 0.0;
     if (numCoarseScores > 1) {
       confidence = bestCoarseScore / sumCoarseScores * numCoarseScores;
+    }
+    if (unrounded) {
+      *unrounded = Skew(-bestCoarseAngle, confidence - 1.0);
     }
     return Skew(-bestCoarseAngle, confidence - 1.0);
   }
@@ -156,10 +163,16 @@ Skew SkewFinder::findSkew(const BinaryImage& image) const {
     bestScore = scoreMinus;
   }
 
-  if (std::abs(bestAngle) < m_minAngle) {
+  if (std::abs(bestAngle) < m_minAngle && !unrounded) {
     return Skew(0.0, Skew::GOOD_CONFIDENCE);
   }
   if (bestScore <= LOW_SCORE) {
+    if (unrounded) {
+      *unrounded = Skew(-bestAngle, 0.0);
+    }
+    if (std::abs(bestAngle) < m_minAngle) {
+      return Skew(0.0, Skew::GOOD_CONFIDENCE);
+    }
     return Skew(-bestAngle, 0.0);  // Zero confidence.
   }
 
@@ -173,6 +186,12 @@ Skew SkewFinder::findSkew(const BinaryImage& image) const {
     sumScores += fineScore1;
     sumScores += fineScore2;
     confidence = bestScore / sumScores * numScores;
+  }
+  if (unrounded) {
+    *unrounded = Skew(-bestAngle, confidence - 1.0);
+  }
+  if (std::abs(bestAngle) < m_minAngle) {
+    return Skew(0.0, Skew::GOOD_CONFIDENCE);
   }
   return Skew(-bestAngle, confidence - 1.0);
 }  // SkewFinder::findSkew

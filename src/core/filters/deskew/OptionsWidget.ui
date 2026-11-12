@@ -70,6 +70,19 @@
        </widget>
       </item>
       <item>
+       <widget class="QCheckBox" name="fallbackCheckBox">
+        <property name="toolTip">
+         <string>Check the automatic deskew angle with a second method (text lines per column) and use that one where it is sure and the first one is not, or is clearly off. Pages without a confident angle are marked uncertain; an automatic oblique above 1° is set to 0 and the page marked. Applies to the whole project.</string>
+        </property>
+        <property name="text">
+         <string>Deskew fallback (check the angle)</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
        <layout class="QHBoxLayout">
         <item>
          <spacer>
@@ -108,6 +121,19 @@
          </spacer>
         </item>
        </layout>
+      </item>
+      <item>
+       <widget class="QLabel" name="uncertainLabel">
+        <property name="styleSheet">
+         <string notr="true">color: #c05000;</string>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+        <property name="text">
+         <string notr="true"/>
+        </property>
+       </widget>
       </item>
       <item>
        <widget class="QCheckBox" name="autoObliqueCheckBox">

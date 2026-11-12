@@ -3,6 +3,7 @@
 
 #include "tst_batch_qt.h"
 #include "tst_core_qt.h"
+#include "tst_deskew_qt.h"
 #include "tst_ux_qt.h"
 
 #include <core/Application.h>
@@ -23,6 +24,9 @@ int main(int argc, char* argv[]) {
 
   TestBatchQt tc3;
   status |= QTest::qExec(&tc3, argc, argv);
+
+  TestDeskewQt tc4;
+  status |= QTest::qExec(&tc4, argc, argv);
 
   return status;
 }

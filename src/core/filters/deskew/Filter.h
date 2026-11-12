@@ -61,6 +61,9 @@ class Filter : public AbstractFilter {
 
   OptionsWidget* optionsWidget();
 
+  /** Per-page parameters and the stage's switches (also for the CLI). */
+  std::shared_ptr<Settings> settings() const { return m_settings; }
+
   std::vector<PageOrderOption> pageOrderOptions() const override;
 
   int selectedPageOrder() const override;
