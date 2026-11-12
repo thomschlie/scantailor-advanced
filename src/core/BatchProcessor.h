@@ -8,6 +8,7 @@
 #include <QString>
 #include <QStringList>
 #include <functional>
+#include <iosfwd>
 #include <memory>
 
 #include "CompositeTaskFactory.h"
@@ -92,6 +93,15 @@ class BatchProcessor {
   const std::shared_ptr<StageSequence>& stages() const { return m_stages; }
 
   const OutputFileNameGenerator& outputFileNameGenerator() const { return m_outFileNameGen; }
+
+  /** Deskew fallback on low confidence (issue #15), stored in the project; default on. */
+  void setDeskewFallback(bool enabled);
+
+  /**
+   * One warning line per page whose automatic deskew or oblique is marked uncertain (issue #15).
+   * Returns the number of such pages.
+   */
+  int printUncertainDeskew(std::ostream& out) const;
 
  private:
   void init(const QString& outputDir, const std::shared_ptr<FileNameDisambiguator>& disambiguator);

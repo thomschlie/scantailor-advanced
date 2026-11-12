@@ -53,7 +53,8 @@ void CacheDrivenTask::process(const PageInfo& pageInfo,
   if (auto* thumbCol = dynamic_cast<ThumbnailCollector*>(collector)) {
     thumbCol->processThumbnail(std::unique_ptr<QGraphicsItem>(
         new Thumbnail(thumbCol->thumbnailCache(), thumbCol->maxLogicalThumbSize(), pageInfo.imageId(), newXform,
-                      m_settings->deviationProvider().isDeviant(pageInfo.id(), deviationCoef, deviationThreshold))));
+                      m_settings->deviationProvider().isDeviant(pageInfo.id(), deviationCoef, deviationThreshold),
+                      params->isUncertain())));
   }
 }  // CacheDrivenTask::process
 }  // namespace deskew

@@ -133,6 +133,13 @@ class SkewFinder {
   Skew findSkew(const BinaryImage& image) const;
 
   /**
+   * \brief As findSkew(image), and \p unrounded (if not null) receives the angle and confidence
+   * before the minimum-angle rule: findSkew() returns 0 with GOOD_CONFIDENCE for any angle below
+   * the minimum angle, without computing the confidence.
+   */
+  Skew findSkew(const BinaryImage& image, Skew* unrounded) const;
+
+  /**
    * \brief Determine skew from the top page edge only (dark-to-light transition).
    * Useful for book scans where the top edge is clear and content-based deskew fails.
    * Returns low confidence if the top edge cannot be detected reliably.

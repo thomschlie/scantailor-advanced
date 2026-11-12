@@ -10,9 +10,11 @@
 #include <QString>
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 #include "AutoManualMode.h"
 #include "Dependencies.h"
+#include "SkewFallback.h"
 
 class QDomDocument;
 class QDomElement;
@@ -29,6 +31,25 @@ struct RotationParams {
 struct ObliqueParams {
   double obliqueAngle = 0.0;
   AutoManualMode mode = MODE_AUTO;
+};
+
+/**
+ * How an automatic deskew / oblique angle was found (scantailor-cli issue #15). Only meaningful
+ * while the respective mode is automatic; a manually set angle never carries these.
+ * In the project XML: attributes "confidence", "angle-source", "uncertain", "rejected-oblique" of
+ * <params>; missing
+ * attributes (projects of older versions) mean "unknown".
+ */
+struct AutoDiagnostics {
+  /** SkewFinder's confidence; empty = unknown (older project, or not computed). */
+  std::optional<double> confidence;
+  DeskewSource source = DeskewSource::PRIMARY;
+  /** No confident estimate: the angle is a best guess. */
+  bool angleUncertain = false;
+  /** The automatic oblique was implausibly large (> MAX_PLAUSIBLE_OBLIQUE) and is set to 0. */
+  bool obliqueUncertain = false;
+  /** That rejected automatic oblique (degrees), if any. */
+  std::optional<double> rejectedOblique;
 };
 
 class Params {
@@ -65,11 +86,36 @@ class Params {
 
   QDomElement toXml(QDomDocument& doc, const QString& name) const;
 
+  /** Diagnostics as stored (see AutoDiagnostics); use the accessors below for the effective state. */
+  const AutoDiagnostics& diagnostics() const { return m_diag; }
+
+  void setDiagnostics(const AutoDiagnostics& diag) { m_diag = diag; }
+
+  /** SkewFinder's confidence of an automatic angle, if known. */
+  std::optional<double> confidence() const {
+    return m_rotation.mode == MODE_AUTO ? m_diag.confidence : std::nullopt;
+  }
+
+  /** Where an automatic angle came from (PRIMARY for manual angles). */
+  DeskewSource angleSource() const { return m_rotation.mode == MODE_AUTO ? m_diag.source : DeskewSource::PRIMARY; }
+
+  bool isAngleUncertain() const { return m_rotation.mode == MODE_AUTO && m_diag.angleUncertain; }
+
+  bool isObliqueUncertain() const { return m_oblique.mode == MODE_AUTO && m_diag.obliqueUncertain; }
+
+  bool isUncertain() const { return isAngleUncertain() || isObliqueUncertain(); }
+
  private:
   RotationParams m_rotation;
   ObliqueParams m_oblique;
   Dependencies m_deps;
+  AutoDiagnostics m_diag;
 };
+
+/** XML value of DeskewSource ("" for PRIMARY), and back (unknown -> PRIMARY). */
+QString deskewSourceToString(DeskewSource source);
+
+DeskewSource deskewSourceFromString(const QString& str);
 
 
 inline double Params::deskewAngle() const {

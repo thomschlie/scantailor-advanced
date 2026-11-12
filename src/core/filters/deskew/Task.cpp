@@ -33,11 +33,22 @@
 #include "ImageView.h"
 #include "ObliqueFinder.h"
 #include "OptionsWidget.h"
+#include "SkewFallback.h"
 #include "TaskStatus.h"
 #include "filters/select_content/Task.h"
 
 namespace deskew {
 using namespace imageproc;
+
+namespace {
+bool foundWithOtherFallbackSetting(const AutoDiagnostics& diag, const bool fallbackEnabled) {
+  if (fallbackEnabled) {
+    return !diag.confidence || diag.source == DeskewSource::DISABLED;
+  }
+  return diag.source == DeskewSource::FALLBACK || diag.source == DeskewSource::BEST_GUESS
+         || diag.source == DeskewSource::NO_TEXT || diag.obliqueUncertain;
+}
+}  // namespace
 
 class Task::UiUpdater : public FilterResult {
  public:
@@ -97,8 +108,13 @@ FilterResultPtr Task::process(const TaskStatus& status, FilterData data) {
   OptionsWidget::UiData uiData;
   uiData.setDependencies(deps);
 
+  const bool fallbackEnabled = m_settings->fallbackEnabled();
   if (params) {
-    if ((!deps.matches(params->dependencies()) || (params->deskewAngle() != uiData.effectiveDeskewAngle()))
+    // An automatic angle of an older project (no confidence stored) may be a silent 0 of a low
+    // confidence: with the fallback on it is found again (issue #15); so is one found while the
+    // fallback switch was the other way.
+    if ((!deps.matches(params->dependencies()) || (params->deskewAngle() != uiData.effectiveDeskewAngle())
+         || foundWithOtherFallbackSetting(params->diagnostics(), fallbackEnabled))
         && (params->mode() == MODE_AUTO)) {
       priorParamsBeforeRecompute = *params;
       params.reset();
@@ -107,9 +123,11 @@ FilterResultPtr Task::process(const TaskStatus& status, FilterData data) {
       uiData.setEffectiveObliqueAngle(params->obliqueAngle());
       uiData.setMode(params->mode());
       uiData.setObliqueMode(params->obliqueMode());
+      uiData.setDiagnostics(params->diagnostics());
 
       Params newParams(uiData.effectiveDeskewAngle(), uiData.effectiveObliqueAngle(), deps, uiData.mode(),
                        uiData.obliqueMode());
+      newParams.setDiagnostics(uiData.diagnostics());
       m_settings->setPageParams(m_pageId, newParams);
     }
   }
@@ -153,14 +171,29 @@ FilterResultPtr Task::process(const TaskStatus& status, FilterData data) {
 
       SkewFinder skewFinder;
       skewFinder.setResolutionRatio((double) rotatedDpm.horizontal() / rotatedDpm.vertical());
-      const Skew skew(m_settings->algoContentBased() ? skewFinder.findSkew(rotatedImage)
+      Skew rawSkew;
+      const Skew skew(m_settings->algoContentBased() ? skewFinder.findSkew(rotatedImage, &rawSkew)
                                                      : skewFinder.findSkewFromTopEdge(rotatedImage));
-
-      if (skew.confidence() >= Skew::GOOD_CONFIDENCE) {
-        uiData.setEffectiveDeskewAngle(-skew.angle());
-      } else {
-        uiData.setEffectiveDeskewAngle(0);
+      if (!m_settings->algoContentBased()) {
+        rawSkew = skew;
       }
+
+      // Upstream sets 0 silently below Skew::GOOD_CONFIDENCE, and SkewFinder itself can lock onto
+      // 0 on open-book scans; the fallback estimator measures the text lines in both cases, and a
+      // page without a confident angle is marked uncertain (issue #15).
+      const Dpi rotatedDpi(rotatedDpm);
+      const DeskewDecision decision = decideDeskew(skew, rawSkew, fallbackEnabled, [&rotatedImage, &rotatedDpi]() {
+        return findSkewFallback(rotatedImage, rotatedDpi);
+      });
+      if (decision.source == DeskewSource::PRIMARY) {
+        uiData.setEffectiveDeskewAngle(-skew.angle());  // exactly as upstream
+      } else {
+        uiData.setEffectiveDeskewAngle(decision.skewAngle == 0.0 ? 0.0 : -decision.skewAngle);
+      }
+      AutoDiagnostics diag;
+      diag.confidence = rawSkew.confidence();
+      diag.source = decision.source;
+      diag.angleUncertain = decision.uncertain;
       uiData.setMode(MODE_AUTO);
       uiData.setObliqueMode(autoObliqueEnabled ? MODE_AUTO : MODE_MANUAL);
 
@@ -195,12 +228,20 @@ FilterResultPtr Task::process(const TaskStatus& status, FilterData data) {
         if (obliqueDeg) {
           uiData.setEffectiveObliqueAngle(-*obliqueDeg);
         }
+        if (fallbackEnabled && isObliqueImplausible(uiData.effectiveObliqueAngle())) {
+          // Not trusted (issue #15): no shear correction, the page is marked for a look.
+          diag.obliqueUncertain = true;
+          diag.rejectedOblique = uiData.effectiveObliqueAngle();
+          uiData.setEffectiveObliqueAngle(0.0);
+        }
       } else {
         uiData.setEffectiveObliqueAngle(preservedObliqueDeg);
       }
+      uiData.setDiagnostics(diag);
 
       Params newParams(uiData.effectiveDeskewAngle(), uiData.effectiveObliqueAngle(), deps, uiData.mode(),
                        uiData.obliqueMode());
+      newParams.setDiagnostics(diag);
       m_settings->setPageParams(m_pageId, newParams);
 
       status.throwIfCancelled();

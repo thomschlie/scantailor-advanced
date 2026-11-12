@@ -3,6 +3,7 @@
 
 #include "OptionsWidget.h"
 
+#include <QStringList>
 #include <utility>
 
 #include <core/DefaultParams.h>
@@ -21,13 +22,22 @@ Params mergeParamsForApply(const std::unique_ptr<Params>& existing,
                            const bool applyOblique) {
   const Dependencies deps(cur.dependencies());
   if (!existing) {
-    return Params(applyDeskew ? cur.effectiveDeskewAngle() : 0.0, applyOblique ? cur.effectiveObliqueAngle() : 0.0,
+    Params params(applyDeskew ? cur.effectiveDeskewAngle() : 0.0, applyOblique ? cur.effectiveObliqueAngle() : 0.0,
                   deps, applyDeskew ? cur.mode() : MODE_AUTO, applyOblique ? cur.obliqueMode() : MODE_AUTO);
+    params.setDiagnostics(cur.diagnostics());
+    return params;
   }
-  return Params(applyDeskew ? cur.effectiveDeskewAngle() : existing->deskewAngle(),
+  Params params(applyDeskew ? cur.effectiveDeskewAngle() : existing->deskewAngle(),
                 applyOblique ? cur.effectiveObliqueAngle() : existing->obliqueAngle(), deps,
                 applyDeskew ? cur.mode() : existing->mode(),
                 applyOblique ? cur.obliqueMode() : existing->obliqueMode());
+  // Diagnostics travel with the angle they describe.
+  AutoDiagnostics diag = applyDeskew ? cur.diagnostics() : existing->diagnostics();
+  const AutoDiagnostics& obliqueFrom = applyOblique ? cur.diagnostics() : existing->diagnostics();
+  diag.obliqueUncertain = obliqueFrom.obliqueUncertain;
+  diag.rejectedOblique = obliqueFrom.rejectedOblique;
+  params.setDiagnostics(diag);
+  return params;
 }
 
 void setDefaultAutoOblique(const bool enabled) {
@@ -54,6 +64,8 @@ OptionsWidget::OptionsWidget(std::shared_ptr<Settings> settings, const PageSelec
   angleSpinBox->adjustSize();
   setSpinBoxUnknownState();
   topEdgeCheckBox->setChecked(!m_settings->algoContentBased());
+  fallbackCheckBox->setChecked(m_settings->fallbackEnabled());
+  uncertainLabel->setVisible(false);
   autoObliqueCheckBox->setChecked(DefaultParamsProvider::getInstance().getParams().getDeskewParams().isAutoOblique());
   obliqueManualBtn->setChecked(true);
   obliqueAutoBtn->setChecked(false);
@@ -131,6 +143,9 @@ void OptionsWidget::preUpdateUI(const PageId& pageId) {
   auto block = m_connectionManager.getScopedBlock();
 
   m_pageId = pageId;
+  topEdgeCheckBox->setChecked(!m_settings->algoContentBased());
+  fallbackCheckBox->setChecked(m_settings->fallbackEnabled());
+  uncertainLabel->setVisible(false);
   setSpinBoxUnknownState();
   autoBtn->setChecked(true);
   autoBtn->setEnabled(false);
@@ -152,6 +167,26 @@ void OptionsWidget::postUpdateUI(const UiData& uiData) {
   setSpinBoxKnownState(degreesToSpinBox(uiData.effectiveDeskewAngle()));
   obliqueSpinBox->setValue(m_uiData.effectiveObliqueAngle());
   autoObliqueCheckBox->setChecked(DefaultParamsProvider::getInstance().getParams().getDeskewParams().isAutoOblique());
+  updateUncertainIndication();
+}
+
+void OptionsWidget::updateUncertainIndication() {
+  const AutoDiagnostics& diag = m_uiData.diagnostics();
+  const bool angleUncertain = m_uiData.mode() == MODE_AUTO && diag.angleUncertain;
+  const bool obliqueUncertain = m_uiData.obliqueMode() == MODE_AUTO && diag.obliqueUncertain;
+  QStringList lines;
+  if (angleUncertain) {
+    lines << tr("Deskew uncertain: no confident angle found (confidence %1). Please check the page.")
+                 .arg(diag.confidence ? QString::number(*diag.confidence, 'f', 2) : QStringLiteral("?"));
+  }
+  if (obliqueUncertain) {
+    lines << tr("Oblique uncertain: the automatic oblique (%1°) is larger than %2° and was set to 0. Please "
+                "check the page.")
+                 .arg(diag.rejectedOblique ? QString::number(*diag.rejectedOblique, 'f', 2) : QStringLiteral("?"))
+                 .arg(MAX_PLAUSIBLE_OBLIQUE);
+  }
+  uncertainLabel->setText(lines.join('\n'));
+  uncertainLabel->setVisible(!lines.isEmpty());
 }
 
 void OptionsWidget::spinBoxValueChanged(const double value) {
@@ -245,7 +280,10 @@ void OptionsWidget::setSpinBoxKnownState(const double angle) {
 void OptionsWidget::commitCurrentParams() {
   Params params(m_uiData.effectiveDeskewAngle(), m_uiData.effectiveObliqueAngle(), m_uiData.dependencies(),
                 m_uiData.mode(), m_uiData.obliqueMode());
+  // Kept for the automatic parts only (Params drops them for manual angles).
+  params.setDiagnostics(m_uiData.diagnostics());
   m_settings->setPageParams(m_pageId, params);
+  updateUncertainIndication();
 }
 
 double OptionsWidget::spinBoxToDegrees(const double sbValue) {
@@ -266,6 +304,16 @@ double OptionsWidget::degreesToSpinBox(const double degrees) {
 void OptionsWidget::topEdgeToggled(bool checked) {
   m_settings->setAlgoContentBased(!checked);
   if (autoBtn->isChecked()) {
+    emit reloadRequested();
+  }
+}
+
+void OptionsWidget::fallbackToggled(const bool checked) {
+  m_settings->setFallbackEnabled(checked);
+  // m_uiData, not autoBtn: autoBtn shares its auto-exclusive group with the oblique mode buttons.
+  if (m_uiData.mode() == MODE_AUTO) {
+    // Task recomputes automatic angles found with the other setting; the other pages follow
+    // when they are processed again.
     emit reloadRequested();
   }
 }
@@ -298,6 +346,7 @@ void OptionsWidget::setupUiConnections() {
   CONNECT(autoBtn, SIGNAL(toggled(bool)), this, SLOT(modeChanged(bool)));
   CONNECT(obliqueAutoBtn, SIGNAL(toggled(bool)), this, SLOT(obliqueModeChanged(bool)));
   CONNECT(topEdgeCheckBox, SIGNAL(toggled(bool)), this, SLOT(topEdgeToggled(bool)));
+  CONNECT(fallbackCheckBox, SIGNAL(toggled(bool)), this, SLOT(fallbackToggled(bool)));
   CONNECT(autoObliqueCheckBox, SIGNAL(toggled(bool)), this, SLOT(autoObliqueCheckBoxToggled(bool)));
   CONNECT(applyDeskewBtn, SIGNAL(clicked()), this, SLOT(showDeskewDialog()));
 }

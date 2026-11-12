@@ -22,6 +22,7 @@
 #include <QThread>
 #include <cstdlib>
 #include <iostream>
+#include <optional>
 
 #include "BatchReport.h"
 #include "Dpi.h"
@@ -143,6 +144,13 @@ int main(int argc, char* argv[]) {
                "off it; all; none. Needs a layout model and stage 4 in the range. Default: each page keeps "
                "its own (off unless set in the GUI). Boxes set by hand are never changed.",
                "list"});
+  p.addOption({"deskew-fallback",
+               "Deskew fallback: on (default) checks SkewFinder's angle with a second method (text lines per "
+               "column) and uses that one where it is sure and SkewFinder is not, or is clearly off; marks pages "
+               "without a confident angle as uncertain, and sets an automatic oblique above 1 deg to 0 and marks "
+               "the page (warning line, project, report); off = upstream behaviour. Stored in the project. "
+               "Manually set angles are never changed.",
+               "on|off"});
   p.addOption({{"v", "verbose"}, "Print stages and pages."});
   p.process(app);
 
@@ -174,6 +182,14 @@ int main(int argc, char* argv[]) {
   opt.pageFailed = [](const PageInfo& page, const QString& error) {
     std::cerr << "error: " << page.imageId().filePath().toStdString() << ": " << error.toStdString() << std::endl;
   };
+  std::optional<bool> deskewFallback;
+  if (p.isSet("deskew-fallback")) {
+    const QString v = p.value("deskew-fallback");
+    if (v != "on" && v != "off") {
+      return fail("--deskew-fallback is on or off");
+    }
+    deskewFallback = (v == "on");
+  }
 
   // Layout detector: load the model now, so a bad path or hash fails before any processing.
   {
@@ -278,7 +294,13 @@ int main(int argc, char* argv[]) {
       }
     }
 
+    if (deskewFallback) {
+      batch->setDeskewFallback(*deskewFallback);
+    }
     const int failed = batch->process(opt);
+    if (opt.endFilter >= 2) {
+      batch->printUncertainDeskew(std::cerr);
+    }
 
     if (!p.isSet("no-save")) {
       if (!batch->saveProject(saveTo)) {

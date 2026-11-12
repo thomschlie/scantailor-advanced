@@ -20,14 +20,19 @@ class Thumbnail : public ThumbnailBase {
             const QSizeF& maxSize,
             const ImageId& imageId,
             const ImageTransformation& xform,
-            bool deviant = false);
+            bool deviant = false,
+            bool uncertain = false);
 
   void prePaintOverImage(QPainter& painter,
                          const QTransform& imageToDisplay,
                          const QTransform& thumbToDisplay) override;
 
  private:
+  /** Orange "?" badge in the top right corner: deskew or oblique uncertain (issue #15). */
+  void paintUncertain(QPainter& painter);
+
   bool m_deviant;
+  bool m_uncertain;
 };
 }  // namespace deskew
 #endif

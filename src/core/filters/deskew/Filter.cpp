@@ -54,6 +54,7 @@ void Filter::preUpdateUI(FilterUiInterface* const ui, const PageInfo& pageInfo) 
 QDomElement Filter::saveSettings(const ProjectWriter& writer, QDomDocument& doc) const {
   QDomElement filterEl(doc.createElement("deskew"));
   filterEl.setAttribute("algoContentBased", m_settings->algoContentBased() ? "1" : "0");
+  filterEl.setAttribute("fallback", m_settings->fallbackEnabled() ? "1" : "0");
 
   writer.enumPages(
       [&](const PageId& pageId, const int numericId) { this->writeParams(doc, filterEl, pageId, numericId); });
@@ -69,6 +70,8 @@ void Filter::loadSettings(const ProjectReader& reader, const QDomElement& filter
   if (!filterEl.isNull() && filterEl.attribute("algoContentBased", "1") == "0") {
     m_settings->setAlgoContentBased(false);
   }
+  // Missing (older projects): on, the default.
+  m_settings->setFallbackEnabled(filterEl.isNull() || filterEl.attribute("fallback", "1") != "0");
 
   const QString pageTagName("page");
   QDomNode node(filterEl.firstChild());

@@ -10,6 +10,7 @@ set(sources
     TestPageRange.cpp
     TestPageSequence.cpp
     TestSelectContentApply.cpp
+    TestSkewFallback.cpp
     TestSmartFilenameOrdering.cpp
     TestStageSequence.cpp
     TestUnits.cpp)

@@ -15,6 +15,7 @@
 #include "FilterOptionsWidget.h"
 #include "PageId.h"
 #include "PageSelectionAccessor.h"
+#include "Params.h"
 #include "ui_OptionsWidget.h"
 
 namespace deskew {
@@ -50,12 +51,17 @@ class OptionsWidget : public FilterOptionsWidget, private Ui::OptionsWidget {
 
     AutoManualMode obliqueMode() const;
 
+    void setDiagnostics(const AutoDiagnostics& diag) { m_diag = diag; }
+
+    const AutoDiagnostics& diagnostics() const { return m_diag; }
+
    private:
     double m_effDeskewAngle;
     double m_effObliqueAngle;
     Dependencies m_deps;
     AutoManualMode m_mode;
     AutoManualMode m_obliqueMode;
+    AutoDiagnostics m_diag;
   };
 
 
@@ -92,6 +98,8 @@ class OptionsWidget : public FilterOptionsWidget, private Ui::OptionsWidget {
 
   void topEdgeToggled(bool checked);
 
+  void fallbackToggled(bool checked);
+
   void autoObliqueCheckBoxToggled(bool checked);
 
   void showDeskewDialog();
@@ -104,6 +112,8 @@ class OptionsWidget : public FilterOptionsWidget, private Ui::OptionsWidget {
   void updateModeIndication(AutoManualMode mode);
 
   void updateObliqueModeIndication(AutoManualMode mode);
+
+  void updateUncertainIndication();
 
   void setSpinBoxUnknownState();
 
