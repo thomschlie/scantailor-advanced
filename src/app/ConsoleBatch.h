@@ -7,6 +7,7 @@
 
 #include <QString>
 #include <QStringList>
+#include <iosfwd>
 #include <memory>
 #include <vector>
 
@@ -64,6 +65,15 @@ class ConsoleBatch {
   bool writeReport(const QString& reportFile) const;
 
   int numFilters() const;
+
+  /** Deskew fallback on low confidence (issue #15), stored in the project; default on. */
+  void setDeskewFallback(bool enabled);
+
+  /**
+   * One warning line per page whose automatic deskew or oblique is marked uncertain (issue #15).
+   * Returns the number of such pages.
+   */
+  int printUncertainDeskew(std::ostream& out) const;
 
  private:
   void init(const QString& outputDir, const std::shared_ptr<class FileNameDisambiguator>& disambiguator);

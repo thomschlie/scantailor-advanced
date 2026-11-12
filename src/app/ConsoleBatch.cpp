@@ -16,6 +16,7 @@
 #include <QTemporaryFile>
 #include <QThreadPool>
 #include <atomic>
+#include <cmath>
 #include <iostream>
 #include <map>
 #include <stdexcept>
@@ -46,6 +47,8 @@
 #include "StageSequence.h"
 #include "ThumbnailPixmapCache.h"
 #include <core/Utils.h>
+#include "filters/deskew/Filter.h"
+#include "filters/deskew/Settings.h"
 #include "filters/deskew/Task.h"
 #include "filters/fix_orientation/Task.h"
 #include "filters/output/Task.h"
@@ -284,6 +287,40 @@ int ConsoleBatch::process(const Options& options) {
     pool.waitForDone();
   }
   return failed.load();
+}
+
+void ConsoleBatch::setDeskewFallback(const bool enabled) {
+  m_stages->deskewFilter()->settings()->setFallbackEnabled(enabled);
+}
+
+int ConsoleBatch::printUncertainDeskew(std::ostream& out) const {
+  const std::shared_ptr<deskew::Settings> settings = m_stages->deskewFilter()->settings();
+  int count = 0;
+  for (const PageInfo& page : m_pages->toPageSequence(PAGE_VIEW)) {
+    const std::unique_ptr<deskew::Params> params = settings->getPageParams(page.id());
+    if (!params || !params->isUncertain()) {
+      continue;
+    }
+    ++count;
+    const QString outName = QFileInfo(m_outFileNameGen.filePathFor(page.id())).completeBaseName();
+    const QString image = QFileInfo(page.imageId().filePath()).fileName();
+    out << "warning: deskew uncertain: " << outName.toStdString() << " (" << image.toStdString();
+    if (page.id().subPage() != PageId::SINGLE_PAGE) {
+      out << " " << page.id().subPageAsString().toStdString();
+    }
+    out << "):";
+    if (params->isAngleUncertain()) {
+      out << " angle " << params->deskewAngle() << " not confirmed (SkewFinder confidence "
+          << params->confidence().value_or(0.0) << ", fallback not sure)";
+    }
+    if (params->isObliqueUncertain()) {
+      out << (params->isAngleUncertain() ? ";" : "") << " automatic oblique "
+          << params->diagnostics().rejectedOblique.value_or(NAN) << " > " << deskew::MAX_PLAUSIBLE_OBLIQUE
+          << ", set to 0";
+    }
+    out << std::endl;
+  }
+  return count;
 }
 
 bool ConsoleBatch::saveProject(const QString& projectFile) const {

@@ -10,7 +10,7 @@
 using namespace core;
 
 namespace deskew {
-Settings::Settings() : m_algoContentBased(true) {
+Settings::Settings() : m_algoContentBased(true), m_fallbackEnabled(true) {
   m_deviationProvider.setComputeValueByKey([this](const PageId& pageId) -> double {
     auto it(m_perPageParams.find(pageId));
     if (it != m_perPageParams.end()) {
@@ -106,6 +106,16 @@ void Settings::setAlgoContentBased(bool contentBased) {
 bool Settings::algoContentBased() const {
   QMutexLocker locker(&m_mutex);
   return m_algoContentBased;
+}
+
+void Settings::setFallbackEnabled(const bool enabled) {
+  QMutexLocker locker(&m_mutex);
+  m_fallbackEnabled = enabled;
+}
+
+bool Settings::fallbackEnabled() const {
+  QMutexLocker locker(&m_mutex);
+  return m_fallbackEnabled;
 }
 
 void Settings::setPendingAutoOblique(const PageId& pageId, const bool enabled) {
