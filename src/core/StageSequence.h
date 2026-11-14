@@ -17,6 +17,7 @@
 #include "filters/select_content/Filter.h"
 
 class PageId;
+class PageInfo;
 class ProjectPages;
 class PageSelectionAccessor;
 class AbstractRelinker;
@@ -64,6 +65,34 @@ class StageSequence {
   int pageLayoutFilterIdx() const { return m_pageLayoutFilterIdx; }
 
   int outputFilterIdx() const { return m_outputFilterIdx; }
+
+  /**
+   * Lets every stage load its default parameters for the page, where the page has
+   * no settings yet. Done before a page is processed.
+   */
+  void loadDefaultSettings(const PageInfo& page) const;
+
+  /**
+   * What has to be propagated down the stage list when the current stage changes.
+   */
+  struct Propagation {
+    /** Content boxes from "Select Content" to "Margins" (ContentBoxPropagator). */
+    bool contentBoxes = false;
+    /** Page orientations from "Fix Orientation" to "Split Pages" (PageOrientationPropagator). */
+    bool pageOrientations = false;
+  };
+
+  /**
+   * The propagation rule for a change of the current stage from fromIdx to toIdx:
+   * whatever was set at or above a stage has to be passed on when moving below it.
+   * fromIdx may be -1 (no stage before, e.g. the first stage of a batch run).
+   */
+  static Propagation propagationOnStageChange(int fromIdx,
+                                              int toIdx,
+                                              int fixOrientationFilterIdx,
+                                              int selectContentFilterIdx);
+
+  Propagation propagationOnStageChange(int fromIdx, int toIdx) const;
 
  private:
   std::shared_ptr<fix_orientation::Filter> m_fixOrientationFilter;
