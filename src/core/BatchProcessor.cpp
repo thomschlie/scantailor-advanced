@@ -87,7 +87,11 @@ bool isAutomaticPageLayout(const page_layout::Params& params,
                            && (alignment.horizontal() == Alignment::LEFT || alignment.horizontal() == Alignment::RIGHT);
   const bool asOptions = outerBottom && sameMarginsMm(params.hardMarginsMM(), fromOptions.hardMarginsMM())
                          && params.isAutoMarginsEnabled() == fromOptions.isAutoMarginsEnabled();
-  return asProfile || asOptions;
+  // With auto margins the page layout stage overwrites the stored hard margins with computed
+  // ones, so their values say nothing about the page having been touched.
+  const bool autoMarginsAsProfile = params.isAutoMarginsEnabled() && profileDefaults.isAutoMarginsEnabled()
+                                    && params.alignment() == profileDefaults.alignment();
+  return asProfile || asOptions || autoMarginsAsProfile;
 }
 
 // QRunnable::create() needs Qt 5.15.
@@ -210,6 +214,12 @@ int BatchProcessor::process(const Options& options) {
   bool pageLayoutApplied = false;
   // Checked before any stage runs: an unknown image is an error, not a half-processed project.
   const std::vector<std::pair<QString, PageSide>> pageSideAnchors = resolvePageSideAnchors(options);
+  // So is an anchor on a split scan, where the split is known: in a loaded project (page split
+  // keeps its stored results) or a run that starts after page split. A new project's scans are
+  // split in this run: checked again when stage 5 is reached, before it runs.
+  if (m_reader || options.startFilter > m_stages->pageSplitFilterIdx()) {
+    checkAnchorsNotSplit(pageSideAnchors);
+  }
 
   for (int stage = options.startFilter; stage <= options.endFilter; ++stage) {
     // Pages without page layout settings, noted before the content box propagation of
@@ -317,14 +327,33 @@ std::vector<std::pair<QString, BatchProcessor::PageSide>> BatchProcessor::resolv
   return anchors;
 }
 
+void BatchProcessor::checkAnchorsNotSplit(const std::vector<std::pair<QString, PageSide>>& anchors) const {
+  for (const PageInfo& page : m_pages->toPageSequence(PAGE_VIEW)) {
+    if (page.id().subPage() == PageId::SINGLE_PAGE) {
+      continue;
+    }
+    for (const auto& anchor : anchors) {
+      if (anchor.first == page.imageId().filePath()) {
+        throw std::runtime_error(("--page-side: " + QFileInfo(anchor.first).fileName()
+                                  + " is a split scan; split scans set their sides themselves (the page after a "
+                                    "right half is a left page, after a lone left half a right page)")
+                                     .toStdString());
+      }
+    }
+  }
+}
+
 void BatchProcessor::applyPageLayoutOptions(const Options& options,
                                             const std::set<PageId>& pageIds,
                                             const std::vector<std::pair<QString, PageSide>>& anchors) const {
   const std::shared_ptr<page_layout::Settings>& settings = m_stages->pageLayoutFilter()->settings();
   const PageSequence pages = m_pages->toPageSequence(PAGE_VIEW);
   const bool rightToLeft = (m_pages->layoutDirection() == Qt::RightToLeft);
+  // Before any page is changed: page split may have split an anchored scan in this run.
+  checkAnchorsNotSplit(anchors);
   // Single pages: the first one is a recto (or --first-page), then they alternate; an anchor
-  // (--page-side) restarts the alternation at the first page of its image file.
+  // (--page-side) restarts the alternation at the first page of its image file, a split scan
+  // after its last half (the other side than that half).
   PageSide runSide = options.firstPageSide.value_or(rightToLeft ? PageSide::LEFT : PageSide::RIGHT);
   size_t runStart = 0;
   std::set<QString> anchorsSeen;
@@ -354,6 +383,10 @@ void BatchProcessor::applyPageLayoutOptions(const Options& options,
           }
           break;
       }
+    }
+    if (page.id().subPage() != PageId::SINGLE_PAGE) {
+      runSide = (page.id().subPage() == PageId::LEFT_PAGE) ? PageSide::RIGHT : PageSide::LEFT;
+      runStart = position + 1;
     }
     ++position;
 
@@ -399,7 +432,8 @@ void BatchProcessor::applyPageLayoutOptions(const Options& options,
       settings->setPageParams(page.id(), fromRun);
     }
     if (options.pageLayoutDecided) {
-      options.pageLayoutDecided(page, outcome, side);
+      options.pageLayoutDecided(page, outcome, side,
+                                (outcome == PageLayoutOutcome::SET) ? fromRun.alignment() : params->alignment());
     }
   }
 }

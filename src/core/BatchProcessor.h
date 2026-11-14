@@ -26,6 +26,9 @@ class ProjectPages;
 class ProjectReader;
 class StageSequence;
 class ThumbnailPixmapCache;
+namespace page_layout {
+class Alignment;
+}
 
 /**
  * \brief Headless batch processing of a project over the stage sequence.
@@ -48,7 +51,7 @@ class BatchProcessor {
   // --page-side: from the first page of this image file on, single pages alternate anew,
   // starting with this side. The image is a file name (no '/'), matched against the names of
   // the project's image files, or a path (relative to the current directory), matched against
-  // their full paths.
+  // their full paths. It must be a single page: split scans set the sides themselves.
   struct PageSideAnchor {
     QString image;
     PageSide side;
@@ -59,7 +62,9 @@ class BatchProcessor {
     OFF,  // only pages without stage-5 settings
     // Also pages whose settings look automatic: hard margins, alignment and auto margins equal
     // the profile's defaults, or margins and auto margins equal what the options give and the
-    // alignment is bottom + left or bottom + right (either side, so mirrored pages get fixed).
+    // alignment is bottom + left or bottom + right (either side, so mirrored pages get fixed),
+    // or auto margins are on for the page and in the profile and the alignment equals the
+    // profile's (margin values ignored: the page layout stage recomputes them).
     // Any other page counts as set by hand and is spared.
     AUTOMATIC,
     ALL  // every page
@@ -89,12 +94,15 @@ class BatchProcessor {
     // Outer + bottom alignment: left pages left+bottom, right pages right+bottom. Left/right
     // as page split gives them; a single page by its position in the page sequence (the first
     // page is a recto: on the right for left-to-right books, on the left for right-to-left).
+    // A split scan restarts the alternation: the single page after it gets the other side than
+    // its last half (after a right half a left page, after a lone left half a right page).
     bool alignOuterBottom = false;
     // Side of the first single page (with alignOuterBottom); none = right for left-to-right
     // books, left for right-to-left.
     std::optional<PageSide> firstPageSide;
     // Restarts of the alternation (with alignOuterBottom). An image that is not in the project,
-    // or a file name that matches several, makes process() throw before any stage runs.
+    // a file name that matches several, or a split scan makes process() throw before any stage
+    // runs; a scan that page split splits in this run (a new project) before stage 5 runs.
     std::vector<PageSideAnchor> pageSideAnchors;
     // Re-set the page layout of pages that already have settings (from the profile defaults and
     // the options above), in the first stage >= 5 of the run.
@@ -106,8 +114,12 @@ class BatchProcessor {
     std::function<void(const PageInfo& page)> pageProcessed;
     std::function<void(const PageInfo& page, const QString& error)> pageFailed;
     // Once per page in the run's first stage >= 5, when page layout options or a reset are
-    // given; side = the page's left/right (with alignOuterBottom), whether or not it was set.
-    std::function<void(const PageInfo& page, PageLayoutOutcome outcome, std::optional<PageSide> side)>
+    // given; side = the page's left/right as counted (with alignOuterBottom), whether or not it
+    // was set; alignment = the page's alignment from now on (the new one if set, else the stored one).
+    std::function<void(const PageInfo& page,
+                       PageLayoutOutcome outcome,
+                       std::optional<PageSide> side,
+                       const page_layout::Alignment& alignment)>
         pageLayoutDecided;
   };
 
@@ -171,6 +183,9 @@ class BatchProcessor {
   // The --page-side anchors as (image file path, side); throws std::runtime_error for an image
   // not in the project or a file name that matches several image files.
   std::vector<std::pair<QString, PageSide>> resolvePageSideAnchors(const Options& options) const;
+
+  // Throws std::runtime_error if an anchor names an image that is split into pages now.
+  void checkAnchorsNotSplit(const std::vector<std::pair<QString, PageSide>>& anchors) const;
 
   std::shared_ptr<ProjectPages> m_pages;
   std::shared_ptr<StageSequence> m_stages;

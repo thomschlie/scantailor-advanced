@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <memory>
 
 namespace {
 // The page's text lines are tilted by this much (degrees, clockwise on screen).
@@ -336,8 +337,12 @@ void TestBatchQt::testFirstPageAndPageSide() {
   options.pageSideAnchors = {{"copy2.png", Side::LEFT}, {images[3], Side::LEFT}};
   std::vector<std::optional<Side>> reported;
   options.pageLayoutDecided
-      = [&reported](const PageInfo&, const BatchProcessor::PageLayoutOutcome outcome, const std::optional<Side> side) {
+      = [&reported](const PageInfo&, const BatchProcessor::PageLayoutOutcome outcome, const std::optional<Side> side,
+                    const page_layout::Alignment& alignment) {
           QCOMPARE(outcome, BatchProcessor::PageLayoutOutcome::SET);
+          QVERIFY(side.has_value());
+          // A page set in the run reports its new alignment.
+          QCOMPARE(alignment, outerBottom(*side));
           reported.push_back(side);
         };
   QCOMPARE(batch.process(options), 0);
@@ -388,8 +393,12 @@ void TestBatchQt::testResetLayout() {
   again.startFilter = again.endFilter;
   again.firstPageSide = Side::LEFT;
   std::vector<Outcome> outcomes;
-  again.pageLayoutDecided
-      = [&outcomes](const PageInfo&, const Outcome outcome, std::optional<Side>) { outcomes.push_back(outcome); };
+  std::vector<page_layout::Alignment> reportedAlignments;
+  again.pageLayoutDecided = [&outcomes, &reportedAlignments](const PageInfo&, const Outcome outcome, std::optional<Side>,
+                                                             const page_layout::Alignment& alignment) {
+    outcomes.push_back(outcome);
+    reportedAlignments.push_back(alignment);
+  };
   QCOMPARE(batch.process(again), 0);
   QCOMPARE(pageLayoutParams(batch, id(0)).alignment(), outerBottom(Side::RIGHT));
   QCOMPARE(pageLayoutParams(batch, id(1)).alignment(), defaults.alignment());
@@ -398,6 +407,7 @@ void TestBatchQt::testResetLayout() {
   // --reset-layout: the automatic pages (mirrored ones and the one at the profile's defaults)
   // get the options; the two set by hand are spared. Rectangles stay as stored.
   outcomes.clear();
+  reportedAlignments.clear();
   const QRectF contentRect0 = pageLayoutParams(batch, id(0)).contentRect();
   again.resetLayout = BatchProcessor::ResetLayout::AUTOMATIC;
   QCOMPARE(batch.process(again), 0);
@@ -405,6 +415,12 @@ void TestBatchQt::testResetLayout() {
       = {Outcome::SET, Outcome::SET, Outcome::SPARED, Outcome::SPARED, Outcome::SET};
   QVERIFY(outcomes == expectedOutcomes);
   const Side expected[5] = {Side::LEFT, Side::RIGHT, Side::LEFT, Side::RIGHT, Side::LEFT};
+  // -v (#16): set pages report their new alignment, spared pages their stored one (not the counted side).
+  QCOMPARE(static_cast<int>(reportedAlignments.size()), 5);
+  QCOMPARE(reportedAlignments[0], outerBottom(Side::LEFT));
+  QCOMPARE(reportedAlignments[2], byHand2.alignment());
+  QCOMPARE(reportedAlignments[3], byHand3.alignment());
+  QVERIFY(byHand3.alignment() != outerBottom(expected[3]));
   for (const int i : {0, 1, 4}) {
     const page_layout::Params params = pageLayoutParams(batch, id(i));
     QCOMPARE(params.alignment(), outerBottom(expected[i]));
@@ -425,4 +441,70 @@ void TestBatchQt::testResetLayout() {
     QCOMPARE(params.alignment(), outerBottom(expected[i]));
     QVERIFY(sameMargins(params.hardMarginsMM(), Margins(0, 0, 0, 11)));
   }
+}
+
+void TestBatchQt::testResetLayoutAutoMargins() {
+  using page_layout::Alignment;
+  using Side = BatchProcessor::PageSide;
+  using Outcome = BatchProcessor::PageLayoutOutcome;
+  // A profile with auto margins: stage 5 replaces the stored hard margins with computed ones.
+  const DefaultParams saved = DefaultParamsProvider::getInstance().getParams();
+  const QString savedName = DefaultParamsProvider::getInstance().getProfileName();
+  struct Restore {
+    DefaultParams params;
+    QString name;
+    ~Restore() { DefaultParamsProvider::getInstance().setParams(std::make_unique<DefaultParams>(params), name); }
+  } restore{saved, savedName};
+  DefaultParams autoProfile = saved;
+  const Alignment profileAlignment = saved.getPageLayoutParams().getAlignment();
+  autoProfile.setPageLayoutParams(DefaultParams::PageLayoutParams(Margins(10, 5, 10, 5), profileAlignment, true));
+  DefaultParamsProvider::getInstance().setParams(std::make_unique<DefaultParams>(autoProfile), "auto margins");
+
+  QDir().mkpath(m_dir.filePath("reset-auto-in"));
+  const QStringList images = pageCopies(m_image, m_dir.filePath("reset-auto-in"), 4);
+  QCOMPARE(images.size(), 4);
+  BatchProcessor batch(images, m_dir.filePath("reset-auto"), Qt::LeftToRight, 0);
+  const std::shared_ptr<page_layout::Settings> settings = batch.stages()->pageLayoutFilter()->settings();
+  const PageSequence pages = batch.pages()->toPageSequence(PAGE_VIEW);
+  QCOMPARE(static_cast<int>(pages.numPages()), 4);
+  const auto id = [&pages](const int i) { return pages.pageAt(static_cast<size_t>(i)).id(); };
+
+  // Processed with the profile alone: auto margins, the profile's alignment, computed margins.
+  BatchProcessor::Options first = allStages(batch);
+  first.endFilter = batch.stages()->pageLayoutFilterIdx();
+  QCOMPARE(batch.process(first), 0);
+  const page_layout::Params untouched = pageLayoutParams(batch, id(0));
+  QVERIFY(untouched.isAutoMarginsEnabled());
+  QCOMPARE(untouched.alignment(), profileAlignment);
+  QVERIFY2(!sameMargins(untouched.hardMarginsMM(), Margins(10, 5, 10, 5)),
+           "stage 5 computed the margins (else this test shows nothing)");
+  // Page 2 aligned by hand (auto margins still on); page 3 with margins entered by hand (auto off).
+  const page_layout::Params stored2 = pageLayoutParams(batch, id(2));
+  const page_layout::Params stored3 = pageLayoutParams(batch, id(3));
+  const page_layout::Params byHand2(stored2.hardMarginsMM(), stored2.pageRect(), stored2.contentRect(),
+                                    stored2.contentSizeMM(), Alignment(Alignment::TOP, Alignment::HCENTER), true);
+  const page_layout::Params byHand3(Margins(3, 3, 3, 3), stored3.pageRect(), stored3.contentRect(),
+                                    stored3.contentSizeMM(), stored3.alignment(), false);
+  settings->setPageParams(id(2), byHand2);
+  settings->setPageParams(id(3), byHand3);
+
+  // --reset-layout --align outer-bottom: pages 0 and 1 count as automatic (auto margins on in the
+  // page and the profile, the profile's alignment; margin values ignored), 2 and 3 are spared.
+  BatchProcessor::Options again = first;
+  again.startFilter = again.endFilter;
+  again.alignOuterBottom = true;
+  again.resetLayout = BatchProcessor::ResetLayout::AUTOMATIC;
+  std::vector<Outcome> outcomes;
+  again.pageLayoutDecided = [&outcomes](const PageInfo&, const Outcome outcome, std::optional<Side>,
+                                        const page_layout::Alignment&) { outcomes.push_back(outcome); };
+  QCOMPARE(batch.process(again), 0);
+  const std::vector<Outcome> expectedOutcomes = {Outcome::SET, Outcome::SET, Outcome::SPARED, Outcome::SPARED};
+  QVERIFY(outcomes == expectedOutcomes);
+  QCOMPARE(pageLayoutParams(batch, id(0)).alignment(), outerBottom(Side::RIGHT));
+  QCOMPARE(pageLayoutParams(batch, id(1)).alignment(), outerBottom(Side::LEFT));
+  QVERIFY(pageLayoutParams(batch, id(0)).isAutoMarginsEnabled());
+  QCOMPARE(pageLayoutParams(batch, id(2)).alignment(), byHand2.alignment());
+  QVERIFY(pageLayoutParams(batch, id(2)).isAutoMarginsEnabled());
+  QVERIFY(!pageLayoutParams(batch, id(3)).isAutoMarginsEnabled());
+  QVERIFY(sameMargins(pageLayoutParams(batch, id(3)).hardMarginsMM(), byHand3.hardMarginsMM()));
 }

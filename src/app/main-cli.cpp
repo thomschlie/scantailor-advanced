@@ -31,6 +31,7 @@
 #include "PageId.h"
 #include "PageInfo.h"
 #include "filters/output/ColorParams.h"
+#include "filters/page_layout/Alignment.h"
 #include "filters/select_content/LayoutDetector.h"
 
 namespace {
@@ -45,6 +46,52 @@ const char* const kStageNames[]
 int fail(const QString& msg) {
   std::cerr << "scantailor-cli: " << msg.toStdString() << std::endl;
   return kExitError;
+}
+
+// A page layout alignment as in -v: vertical+horizontal, with the names of the project file
+// (top+center, bottom+left, ...); "none" for a null alignment (the page is not aligned).
+std::string alignmentName(const page_layout::Alignment& alignment) {
+  using page_layout::Alignment;
+  if (alignment.isNull()) {
+    return "none";
+  }
+  const char* vertical = "";
+  switch (alignment.vertical()) {
+    case Alignment::TOP:
+      vertical = "top";
+      break;
+    case Alignment::VCENTER:
+      vertical = "center";
+      break;
+    case Alignment::BOTTOM:
+      vertical = "bottom";
+      break;
+    case Alignment::VAUTO:
+      vertical = "auto";
+      break;
+    case Alignment::VORIGINAL:
+      vertical = "original";
+      break;
+  }
+  const char* horizontal = "";
+  switch (alignment.horizontal()) {
+    case Alignment::LEFT:
+      horizontal = "left";
+      break;
+    case Alignment::HCENTER:
+      horizontal = "center";
+      break;
+    case Alignment::RIGHT:
+      horizontal = "right";
+      break;
+    case Alignment::HAUTO:
+      horizontal = "auto";
+      break;
+    case Alignment::HORIGINAL:
+      horizontal = "original";
+      break;
+  }
+  return std::string(vertical) + "+" + horizontal;
 }
 
 bool parseStage(const QCommandLineParser& parser, const QString& name, const int fallback, int* out) {
@@ -130,13 +177,14 @@ int main(int argc, char* argv[]) {
   p.addOption({"output-dpi", "Output resolution for pages without settings. Default: from the profile.", "dpi"});
   p.addOption({"margins-mm",
                "Page layout (stage 5) for pages without settings: hard margins left,top,right,bottom in mm "
-               "(auto margins off). Needs stage 5 or 6 in the stage range. Default: from the profile.",
+               "(auto margins off). Needs stage 5 in the stage range. Default: from the profile.",
                "L,T,R,B"});
   p.addOption({"align",
                "Page layout (stage 5) for pages without settings: outer-bottom puts left pages left+bottom and "
                "right pages right+bottom. Left/right from page split; a single page by its position in the page "
-               "sequence (the first page is a recto: right for left-to-right, left for --rtl), alternating. "
-               "Needs stage 5 or 6 in the stage range. Default: from the profile.",
+               "sequence (the first page is a recto: right for left-to-right, left for --rtl), alternating; "
+               "after a split scan the next single page gets the other side than its last half. "
+               "Needs stage 5 in the stage range. Default: from the profile.",
                "outer-bottom"});
   p.addOption({"first-page",
                "With --align outer-bottom: side of the first single page. Default: right (left with --rtl).",
@@ -144,8 +192,8 @@ int main(int argc, char* argv[]) {
   p.addOption({"page-side",
                "With --align outer-bottom, repeatable: single pages alternate anew from the first page of this "
                "image file, starting with this side (a missing or extra scan). The image is a file name as in the "
-               "project (e.g. page-012.jpg), or a path if it contains '/'. Halves of split scans keep page "
-               "split's side. Needs stage 5 in the stage range.",
+               "project (e.g. page-012.jpg), or a path if it contains '/'. Not a split scan: split scans set "
+               "their sides themselves. Needs stage 5 in the stage range.",
                "image=left|right"});
   p.addOption({"reset-layout",
                "Re-set the page layout (stage 5) of pages that already have settings from the profile and "
@@ -244,9 +292,6 @@ int main(int argc, char* argv[]) {
     }
     opt.alignOuterBottom = true;
   }
-  if ((opt.pageLayoutMarginsMm || opt.alignOuterBottom) && opt.endFilter < 4) {
-    return fail("--margins-mm and --align need stage 5 (page layout) or 6 in the stage range");
-  }
   const auto parseSide = [](const QString& value, BatchProcessor::PageSide* side) {
     if (value == "left" || value == "right") {
       *side = (value == "left") ? BatchProcessor::PageSide::LEFT : BatchProcessor::PageSide::RIGHT;
@@ -254,7 +299,11 @@ int main(int argc, char* argv[]) {
     }
     return false;
   };
+  // Every page layout option needs stage 5 in the stage range (start <= 5 <= end).
   const bool stage5InRange = (opt.startFilter <= 4) && (opt.endFilter >= 4);
+  if ((opt.pageLayoutMarginsMm || opt.alignOuterBottom) && !stage5InRange) {
+    return fail("--margins-mm and --align need stage 5 (page layout) in the stage range");
+  }
   if (p.isSet("first-page")) {
     BatchProcessor::PageSide side;
     if (!parseSide(p.value("first-page"), &side)) {
@@ -298,29 +347,32 @@ int main(int argc, char* argv[]) {
   int layoutReset = 0;
   std::vector<std::string> layoutSpared;
   opt.pageLayoutDecided = [&](const PageInfo& page, const BatchProcessor::PageLayoutOutcome outcome,
-                              const std::optional<BatchProcessor::PageSide> side) {
+                              const std::optional<BatchProcessor::PageSide> side,
+                              const page_layout::Alignment& alignment) {
     if (outcome == BatchProcessor::PageLayoutOutcome::SET) {
       ++layoutReset;
     } else if (outcome == BatchProcessor::PageLayoutOutcome::SPARED) {
       layoutSpared.push_back(pageName(page));
     }
     if (verbose) {
-      std::cout << "  page layout: " << pageName(page);
-      if (side) {
-        std::cout << ": " << ((*side == BatchProcessor::PageSide::LEFT) ? "left" : "right");
-      }
+      // The page's alignment from now on: the new one if set, the stored one if kept; for a kept
+      // page also the side the run counted for it.
+      std::cout << "  page layout: " << pageName(page) << ": " << alignmentName(alignment);
       switch (outcome) {
         case BatchProcessor::PageLayoutOutcome::SET:
-          std::cout << " (set)";
+          std::cout << " (set";
           break;
         case BatchProcessor::PageLayoutOutcome::KEPT:
-          std::cout << " (kept: has stage-5 settings)";
+          std::cout << " (kept: has stage-5 settings";
           break;
         case BatchProcessor::PageLayoutOutcome::SPARED:
-          std::cout << " (kept: looks set by hand)";
+          std::cout << " (kept: looks set by hand";
           break;
       }
-      std::cout << std::endl;
+      if (side && outcome != BatchProcessor::PageLayoutOutcome::SET) {
+        std::cout << "; counting: " << ((*side == BatchProcessor::PageSide::LEFT) ? "left" : "right");
+      }
+      std::cout << ")" << std::endl;
     }
   };
   std::optional<bool> deskewFallback;
