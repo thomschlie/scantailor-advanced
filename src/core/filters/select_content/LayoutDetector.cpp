@@ -1,4 +1,4 @@
-// Copyright (C) 2026  scantailor-cli contributors
+// Copyright (C) 2026  Thomas Schlieter
 // Use of this source code is governed by the GNU GPLv3 license that can be found in the LICENSE file.
 
 #include "LayoutDetector.h"
