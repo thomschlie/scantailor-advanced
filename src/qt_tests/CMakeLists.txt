@@ -10,3 +10,6 @@ target_link_libraries(
 target_include_directories(qt_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/src")
 
 add_test(NAME qt_tests COMMAND qt_tests)
+# The tests need no window system; without this, ctest on a machine without a display
+# (e.g. CI) aborts at startup ("could not connect to display").
+set_tests_properties(qt_tests PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=offscreen)
