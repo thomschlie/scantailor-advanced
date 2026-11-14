@@ -19,6 +19,7 @@ class TestBatchQt : public QObject {
   void testOuterBottomLayout();
   void testOuterBottomRightToLeft();
   void testFirstPageAndPageSide();
+  void testResetLayout();
 
  private:
   QTemporaryDir m_dir;

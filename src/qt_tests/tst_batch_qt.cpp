@@ -15,6 +15,7 @@
 #include <filters/page_layout/Filter.h>
 #include <filters/page_layout/Params.h>
 #include <filters/page_layout/Settings.h>
+#include <filters/page_layout/Utils.h>
 
 #include <QDir>
 #include <QDomDocument>
@@ -345,5 +346,83 @@ void TestBatchQt::testFirstPageAndPageSide() {
   for (int i = 0; i < 4; ++i) {
     QCOMPARE(pageLayoutParams(batch, pages.pageAt(static_cast<size_t>(i)).id()).alignment(), outerBottom(expected[i]));
     QVERIFY(reported[i] && *reported[i] == expected[i]);
+  }
+}
+
+void TestBatchQt::testResetLayout() {
+  using page_layout::Alignment;
+  using Side = BatchProcessor::PageSide;
+  using Outcome = BatchProcessor::PageLayoutOutcome;
+  QDir().mkpath(m_dir.filePath("reset-in"));
+  const QStringList images = pageCopies(m_image, m_dir.filePath("reset-in"), 5);
+  QCOMPARE(images.size(), 5);
+  BatchProcessor batch(images, m_dir.filePath("reset"), Qt::LeftToRight, 0);
+  const std::shared_ptr<page_layout::Settings> settings = batch.stages()->pageLayoutFilter()->settings();
+  const PageSequence pages = batch.pages()->toPageSequence(PAGE_VIEW);
+  QCOMPARE(static_cast<int>(pages.numPages()), 5);
+  const auto id = [&pages](const int i) { return pages.pageAt(static_cast<size_t>(i)).id(); };
+
+  // A processed project: outer + bottom, first page on the right.
+  BatchProcessor::Options first = allStages(batch);
+  first.endFilter = batch.stages()->pageLayoutFilterIdx();
+  first.alignOuterBottom = true;
+  first.pageLayoutMarginsMm = Margins(0, 0, 0, 11);
+  QCOMPARE(batch.process(first), 0);
+  QCOMPARE(pageLayoutParams(batch, id(0)).alignment(), outerBottom(Side::RIGHT));
+  // Page 1 back at the profile's defaults (automatic too); page 2 aligned by hand (top +
+  // centre), page 3 with margins of its own: both set by hand.
+  const page_layout::Params stored2 = pageLayoutParams(batch, id(2));
+  const page_layout::Params stored3 = pageLayoutParams(batch, id(3));
+  const page_layout::Params defaults
+      = page_layout::Utils::buildDefaultParams(pages.pageAt(static_cast<size_t>(1)).metadata().dpi());
+  settings->setPageParams(id(1), defaults);
+  const page_layout::Params byHand2(stored2.hardMarginsMM(), stored2.pageRect(), stored2.contentRect(),
+                                    stored2.contentSizeMM(), Alignment(Alignment::TOP, Alignment::HCENTER), false);
+  const page_layout::Params byHand3(Margins(3, 3, 3, 3), stored3.pageRect(), stored3.contentRect(),
+                                    stored3.contentSizeMM(), stored3.alignment(), false);
+  settings->setPageParams(id(2), byHand2);
+  settings->setPageParams(id(3), byHand3);
+
+  // The book starts with a verso after all: without a reset nothing changes.
+  BatchProcessor::Options again = first;
+  again.startFilter = again.endFilter;
+  again.firstPageSide = Side::LEFT;
+  std::vector<Outcome> outcomes;
+  again.pageLayoutDecided
+      = [&outcomes](const PageInfo&, const Outcome outcome, std::optional<Side>) { outcomes.push_back(outcome); };
+  QCOMPARE(batch.process(again), 0);
+  QCOMPARE(pageLayoutParams(batch, id(0)).alignment(), outerBottom(Side::RIGHT));
+  QCOMPARE(pageLayoutParams(batch, id(1)).alignment(), defaults.alignment());
+  QVERIFY(std::all_of(outcomes.begin(), outcomes.end(), [](Outcome o) { return o == Outcome::KEPT; }));
+
+  // --reset-layout: the automatic pages (mirrored ones and the one at the profile's defaults)
+  // get the options; the two set by hand are spared. Rectangles stay as stored.
+  outcomes.clear();
+  const QRectF contentRect0 = pageLayoutParams(batch, id(0)).contentRect();
+  again.resetLayout = BatchProcessor::ResetLayout::AUTOMATIC;
+  QCOMPARE(batch.process(again), 0);
+  const std::vector<Outcome> expectedOutcomes
+      = {Outcome::SET, Outcome::SET, Outcome::SPARED, Outcome::SPARED, Outcome::SET};
+  QVERIFY(outcomes == expectedOutcomes);
+  const Side expected[5] = {Side::LEFT, Side::RIGHT, Side::LEFT, Side::RIGHT, Side::LEFT};
+  for (const int i : {0, 1, 4}) {
+    const page_layout::Params params = pageLayoutParams(batch, id(i));
+    QCOMPARE(params.alignment(), outerBottom(expected[i]));
+    QVERIFY(sameMargins(params.hardMarginsMM(), Margins(0, 0, 0, 11)));
+    QVERIFY(!params.isAutoMarginsEnabled());
+  }
+  QCOMPARE(pageLayoutParams(batch, id(0)).contentRect(), contentRect0);
+  QCOMPARE(pageLayoutParams(batch, id(2)).alignment(), byHand2.alignment());
+  QVERIFY(sameMargins(pageLayoutParams(batch, id(3)).hardMarginsMM(), byHand3.hardMarginsMM()));
+
+  // --reset-layout=all: every page.
+  outcomes.clear();
+  again.resetLayout = BatchProcessor::ResetLayout::ALL;
+  QCOMPARE(batch.process(again), 0);
+  QVERIFY(std::all_of(outcomes.begin(), outcomes.end(), [](Outcome o) { return o == Outcome::SET; }));
+  for (int i = 0; i < 5; ++i) {
+    const page_layout::Params params = pageLayoutParams(batch, id(i));
+    QCOMPARE(params.alignment(), outerBottom(expected[i]));
+    QVERIFY(sameMargins(params.hardMarginsMM(), Margins(0, 0, 0, 11)));
   }
 }

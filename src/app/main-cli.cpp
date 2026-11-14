@@ -24,6 +24,7 @@
 #include <iostream>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "BatchReport.h"
 #include "Dpi.h"
@@ -146,6 +147,11 @@ int main(int argc, char* argv[]) {
                "project (e.g. page-012.jpg), or a path if it contains '/'. Halves of split scans keep page "
                "split's side. Needs stage 5 in the stage range.",
                "image=left|right"});
+  p.addOption({"reset-layout",
+               "Re-set the page layout (stage 5) of pages that already have settings from the profile and "
+               "--margins-mm / --align / --first-page / --page-side; pages whose settings look set by hand are "
+               "spared (reported; names with -v). --reset-layout=all re-sets every page. Needs stage 5 in the "
+               "stage range."});
   p.addOption({"start-stage", "First stage to run (1-6). Default 1.", "n"});
   p.addOption({"end-stage", "Last stage to run (1-6). Default 6.", "n"});
   p.addOption({"source-dpi", "Resolution of the input images, overriding the files (images mode).", "dpi"});
@@ -173,7 +179,22 @@ int main(int argc, char* argv[]) {
                "Manually set angles are never changed.",
                "on|off"});
   p.addOption({{"v", "verbose"}, "Print stages and pages."});
-  p.process(app);
+  // --reset-layout takes an optional "=all", which QCommandLineParser has no notion of.
+  QCommandLineOption resetLayoutAll("reset-layout-all");
+  resetLayoutAll.setFlags(QCommandLineOption::HiddenFromHelp);
+  p.addOption(resetLayoutAll);
+  QStringList arguments = Application::arguments();
+  for (QString& arg : arguments) {
+    if (arg.startsWith("--reset-layout=")) {
+      if (arg != "--reset-layout=all") {
+        return fail("--reset-layout takes no value or =all");
+      }
+      arg = "--reset-layout-all";
+    } else if (arg == "--reset-layout-all") {
+      return fail("unknown option: --reset-layout-all (did you mean --reset-layout=all?)");
+    }
+  }
+  p.process(arguments);
 
   const QStringList images = p.positionalArguments();
   const QString project = p.value("project");
@@ -257,7 +278,14 @@ int main(int argc, char* argv[]) {
       return fail("--first-page and --page-side need stage 5 (page layout) in the stage range");
     }
   }
-  // Page layout outcome per page (in the run's first stage >= 5): sides with -v.
+  if (p.isSet("reset-layout") || p.isSet(resetLayoutAll)) {
+    opt.resetLayout
+        = p.isSet(resetLayoutAll) ? BatchProcessor::ResetLayout::ALL : BatchProcessor::ResetLayout::AUTOMATIC;
+    if (!stage5InRange) {
+      return fail("--reset-layout needs stage 5 (page layout) in the stage range");
+    }
+  }
+  // Page layout outcome per page (in the run's first stage >= 5): sides with -v, spared pages.
   const auto pageName = [](const PageInfo& page) {
     std::string name = page.imageId().filePath().toStdString();
     if (page.id().subPage() == PageId::LEFT_PAGE) {
@@ -267,9 +295,16 @@ int main(int argc, char* argv[]) {
     }
     return name;
   };
-  if (verbose) {
-    opt.pageLayoutDecided = [&pageName](const PageInfo& page, const BatchProcessor::PageLayoutOutcome outcome,
-                                        const std::optional<BatchProcessor::PageSide> side) {
+  int layoutReset = 0;
+  std::vector<std::string> layoutSpared;
+  opt.pageLayoutDecided = [&](const PageInfo& page, const BatchProcessor::PageLayoutOutcome outcome,
+                              const std::optional<BatchProcessor::PageSide> side) {
+    if (outcome == BatchProcessor::PageLayoutOutcome::SET) {
+      ++layoutReset;
+    } else if (outcome == BatchProcessor::PageLayoutOutcome::SPARED) {
+      layoutSpared.push_back(pageName(page));
+    }
+    if (verbose) {
       std::cout << "  page layout: " << pageName(page);
       if (side) {
         std::cout << ": " << ((*side == BatchProcessor::PageSide::LEFT) ? "left" : "right");
@@ -281,10 +316,13 @@ int main(int argc, char* argv[]) {
         case BatchProcessor::PageLayoutOutcome::KEPT:
           std::cout << " (kept: has stage-5 settings)";
           break;
+        case BatchProcessor::PageLayoutOutcome::SPARED:
+          std::cout << " (kept: looks set by hand)";
+          break;
       }
       std::cout << std::endl;
-    };
-  }
+    }
+  };
   std::optional<bool> deskewFallback;
   if (p.isSet("deskew-fallback")) {
     const QString v = p.value("deskew-fallback");
@@ -401,6 +439,19 @@ int main(int argc, char* argv[]) {
       batch->setDeskewFallback(*deskewFallback);
     }
     const int failed = batch->process(opt);
+    if (opt.resetLayout != BatchProcessor::ResetLayout::OFF) {
+      std::cout << "page layout: set on " << layoutReset << " page(s), " << layoutSpared.size()
+                << " page(s) spared as set by hand";
+      if (!layoutSpared.empty()) {
+        std::cout << " (--reset-layout=all re-sets them too)";
+      }
+      std::cout << std::endl;
+      if (verbose) {
+        for (const std::string& name : layoutSpared) {
+          std::cout << "  spared: " << name << std::endl;
+        }
+      }
+    }
     if (opt.endFilter >= 2) {
       batch->printUncertainDeskew(std::cerr);
     }

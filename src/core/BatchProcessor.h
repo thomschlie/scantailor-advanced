@@ -54,10 +54,22 @@ class BatchProcessor {
     PageSide side;
   };
 
+  // Which pages get the page layout (stage 5) defaults and options in this run.
+  enum class ResetLayout {
+    OFF,  // only pages without stage-5 settings
+    // Also pages whose settings look automatic: hard margins, alignment and auto margins equal
+    // the profile's defaults, or margins and auto margins equal what the options give and the
+    // alignment is bottom + left or bottom + right (either side, so mirrored pages get fixed).
+    // Any other page counts as set by hand and is spared.
+    AUTOMATIC,
+    ALL  // every page
+  };
+
   // What happened to a page's page layout in the run's first stage >= 5.
   enum class PageLayoutOutcome {
-    SET,  // defaults + options set in this run
-    KEPT  // has settings of its own
+    SET,    // defaults + options set in this run
+    KEPT,   // has settings of its own (no reset)
+    SPARED  // reset, but the settings look set by hand: kept
   };
 
   struct Options {
@@ -84,14 +96,17 @@ class BatchProcessor {
     // Restarts of the alternation (with alignOuterBottom). An image that is not in the project,
     // or a file name that matches several, makes process() throw before any stage runs.
     std::vector<PageSideAnchor> pageSideAnchors;
+    // Re-set the page layout of pages that already have settings (from the profile defaults and
+    // the options above), in the first stage >= 5 of the run.
+    ResetLayout resetLayout = ResetLayout::OFF;
 
     // Progress callbacks, optional. They are never called concurrently,
     // but may be called from worker threads.
     std::function<void(int stage, int numPages)> stageStarted;
     std::function<void(const PageInfo& page)> pageProcessed;
     std::function<void(const PageInfo& page, const QString& error)> pageFailed;
-    // Once per page in the run's first stage >= 5, when page layout options are given;
-    // side = the page's left/right (with alignOuterBottom), whether or not it was set.
+    // Once per page in the run's first stage >= 5, when page layout options or a reset are
+    // given; side = the page's left/right (with alignOuterBottom), whether or not it was set.
     std::function<void(const PageInfo& page, PageLayoutOutcome outcome, std::optional<PageSide> side)>
         pageLayoutDecided;
   };

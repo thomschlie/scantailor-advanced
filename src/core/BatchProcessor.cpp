@@ -67,6 +67,29 @@ class AllPagesSelectionProvider : public PageSelectionProvider {
   std::shared_ptr<ProjectPages> m_pages;
 };
 
+bool sameMarginsMm(const Margins& a, const Margins& b) {
+  // Stored as text in the project file; a thousandth of a millimetre is far below a pixel.
+  const double eps = 1e-3;
+  return std::abs(a.left() - b.left()) < eps && std::abs(a.top() - b.top()) < eps
+         && std::abs(a.right() - b.right()) < eps && std::abs(a.bottom() - b.bottom()) < eps;
+}
+
+// --reset-layout: whether a page's stored page layout looks automatic (BatchProcessor::ResetLayout).
+bool isAutomaticPageLayout(const page_layout::Params& params,
+                           const page_layout::Params& profileDefaults,
+                           const page_layout::Params& fromOptions) {
+  using page_layout::Alignment;
+  const bool asProfile = sameMarginsMm(params.hardMarginsMM(), profileDefaults.hardMarginsMM())
+                         && params.alignment() == profileDefaults.alignment()
+                         && params.isAutoMarginsEnabled() == profileDefaults.isAutoMarginsEnabled();
+  const Alignment& alignment = params.alignment();
+  const bool outerBottom = !alignment.isNull() && alignment.vertical() == Alignment::BOTTOM
+                           && (alignment.horizontal() == Alignment::LEFT || alignment.horizontal() == Alignment::RIGHT);
+  const bool asOptions = outerBottom && sameMarginsMm(params.hardMarginsMM(), fromOptions.hardMarginsMM())
+                         && params.isAutoMarginsEnabled() == fromOptions.isAutoMarginsEnabled();
+  return asProfile || asOptions;
+}
+
 // QRunnable::create() needs Qt 5.15.
 class FunctionRunnable : public QRunnable {
  public:
@@ -179,7 +202,8 @@ int BatchProcessor::process(const Options& options) {
   std::atomic<int> failed{0};
   QMutex callbackMutex;
 
-  const bool pageLayoutOptions = options.pageLayoutMarginsMm || options.alignOuterBottom;
+  const bool pageLayoutOptions
+      = options.pageLayoutMarginsMm || options.alignOuterBottom || (options.resetLayout != ResetLayout::OFF);
   const std::shared_ptr<page_layout::Settings>& pageLayoutSettings = m_stages->pageLayoutFilter()->settings();
   // Pages that got the page layout defaults in this run and still wait for the page layout options.
   std::set<PageId> pageLayoutPending;
@@ -209,7 +233,7 @@ int BatchProcessor::process(const Options& options) {
       }
       m_stages->loadDefaultSettings(page);
     }
-    // --margins-mm / --align: once the page sequence is final (page split
+    // --margins-mm / --align / --reset-layout: once the page sequence is final (page split
     // done), before "Margins"; only in the run's first stage >= 5.
     if (pageLayoutOptions && !pageLayoutApplied && stage >= m_stages->pageLayoutFilterIdx()) {
       applyPageLayoutOptions(options, pageLayoutPending, pageSideAnchors);
@@ -355,9 +379,22 @@ void BatchProcessor::applyPageLayoutOptions(const Options& options,
     const page_layout::Params fromRun(margins, params->pageRect(), params->contentRect(), params->contentSizeMM(),
                                       alignment, autoMargins);
 
-    // A page with settings of its own (or from an earlier run) keeps them.
-    const PageLayoutOutcome outcome
-        = (pageIds.count(page.id()) == 0) ? PageLayoutOutcome::KEPT : PageLayoutOutcome::SET;
+    PageLayoutOutcome outcome = PageLayoutOutcome::SET;
+    if (pageIds.count(page.id()) == 0) {
+      // Has settings of its own (or got them in an earlier run).
+      switch (options.resetLayout) {
+        case ResetLayout::OFF:
+          outcome = PageLayoutOutcome::KEPT;
+          break;
+        case ResetLayout::AUTOMATIC:
+          if (!isAutomaticPageLayout(*params, profileDefaults, fromRun)) {
+            outcome = PageLayoutOutcome::SPARED;
+          }
+          break;
+        case ResetLayout::ALL:
+          break;
+      }
+    }
     if (outcome == PageLayoutOutcome::SET) {
       settings->setPageParams(page.id(), fromRun);
     }
