@@ -507,4 +507,31 @@ void TestBatchQt::testResetLayoutAutoMargins() {
   QVERIFY(pageLayoutParams(batch, id(2)).isAutoMarginsEnabled());
   QVERIFY(!pageLayoutParams(batch, id(3)).isAutoMarginsEnabled());
   QVERIFY(sameMargins(pageLayoutParams(batch, id(3)).hardMarginsMM(), byHand3.hardMarginsMM()));
+
+  // A second --reset-layout with the same profile (no --margins-mm): pages 0 and 1 are outer +
+  // bottom from the first reset, with margins stage 5 computed again. They count as automatic
+  // (auto margins on in the page and in what the options give, outer + bottom, margin values
+  // ignored) and get the new sides of --first-page left. Page 1 gets hand-entered margins first
+  // (auto off, still outer + bottom): spared, like pages 2 and 3.
+  QVERIFY2(outerBottom(Side::RIGHT) != profileAlignment && outerBottom(Side::LEFT) != profileAlignment,
+           "the profile's alignment is not outer + bottom (else this test shows nothing)");
+  QVERIFY2(!sameMargins(pageLayoutParams(batch, id(0)).hardMarginsMM(), Margins(10, 5, 10, 5)),
+           "stage 5 computed the margins of the reset page");
+  const page_layout::Params stored1 = pageLayoutParams(batch, id(1));
+  const page_layout::Params byHand1(Margins(4, 4, 4, 4), stored1.pageRect(), stored1.contentRect(),
+                                    stored1.contentSizeMM(), stored1.alignment(), false);
+  settings->setPageParams(id(1), byHand1);
+  BatchProcessor::Options second = again;
+  second.firstPageSide = Side::LEFT;
+  std::vector<Outcome> secondOutcomes;
+  second.pageLayoutDecided = [&secondOutcomes](const PageInfo&, const Outcome outcome, std::optional<Side>,
+                                               const page_layout::Alignment&) { secondOutcomes.push_back(outcome); };
+  QCOMPARE(batch.process(second), 0);
+  const std::vector<Outcome> expectedSecond = {Outcome::SET, Outcome::SPARED, Outcome::SPARED, Outcome::SPARED};
+  QVERIFY(secondOutcomes == expectedSecond);
+  QCOMPARE(pageLayoutParams(batch, id(0)).alignment(), outerBottom(Side::LEFT));
+  QVERIFY(pageLayoutParams(batch, id(0)).isAutoMarginsEnabled());
+  QCOMPARE(pageLayoutParams(batch, id(1)).alignment(), outerBottom(Side::LEFT));
+  QVERIFY(!pageLayoutParams(batch, id(1)).isAutoMarginsEnabled());
+  QVERIFY(sameMargins(pageLayoutParams(batch, id(1)).hardMarginsMM(), byHand1.hardMarginsMM()));
 }

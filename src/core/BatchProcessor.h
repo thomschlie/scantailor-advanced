@@ -64,7 +64,9 @@ class BatchProcessor {
     // the profile's defaults, or margins and auto margins equal what the options give and the
     // alignment is bottom + left or bottom + right (either side, so mirrored pages get fixed),
     // or auto margins are on for the page and in the profile and the alignment equals the
-    // profile's (margin values ignored: the page layout stage recomputes them).
+    // profile's. Margin values are ignored when auto margins are on for the page and in what the
+    // options give (the page layout stage recomputes them), so a page an earlier reset set to
+    // outer + bottom with an auto-margins profile still counts as automatic.
     // Any other page counts as set by hand and is spared.
     AUTOMATIC,
     ALL  // every page

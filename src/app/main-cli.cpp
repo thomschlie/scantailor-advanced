@@ -193,7 +193,7 @@ int main(int argc, char* argv[]) {
                "With --align outer-bottom, repeatable: single pages alternate anew from the first page of this "
                "image file, starting with this side (a missing or extra scan). The image is a file name as in the "
                "project (e.g. page-012.jpg), or a path if it contains '/'. Not a split scan: split scans set "
-               "their sides themselves. Needs stage 5 in the stage range.",
+               "their sides themselves. Only with --project; needs stage 5 in the stage range.",
                "image=left|right"});
   p.addOption({"reset-layout",
                "Re-set the page layout (stage 5) of pages that already have settings from the profile and "
@@ -299,11 +299,6 @@ int main(int argc, char* argv[]) {
     }
     return false;
   };
-  // Every page layout option needs stage 5 in the stage range (start <= 5 <= end).
-  const bool stage5InRange = (opt.startFilter <= 4) && (opt.endFilter >= 4);
-  if ((opt.pageLayoutMarginsMm || opt.alignOuterBottom) && !stage5InRange) {
-    return fail("--margins-mm and --align need stage 5 (page layout) in the stage range");
-  }
   if (p.isSet("first-page")) {
     BatchProcessor::PageSide side;
     if (!parseSide(p.value("first-page"), &side)) {
@@ -319,19 +314,30 @@ int main(int argc, char* argv[]) {
     }
     opt.pageSideAnchors.push_back({value.left(eq), side});
   }
+  // Anchors correct the page sides of a known project; a new project's scans are not split yet.
+  if (!opt.pageSideAnchors.empty() && project.isEmpty()) {
+    return fail("--page-side needs --project: it corrects the page sides of an existing project");
+  }
   if (opt.firstPageSide || !opt.pageSideAnchors.empty()) {
     if (!opt.alignOuterBottom) {
       return fail("--first-page and --page-side need --align outer-bottom");
-    }
-    if (!stage5InRange) {
-      return fail("--first-page and --page-side need stage 5 (page layout) in the stage range");
     }
   }
   if (p.isSet("reset-layout") || p.isSet(resetLayoutAll)) {
     opt.resetLayout
         = p.isSet(resetLayoutAll) ? BatchProcessor::ResetLayout::ALL : BatchProcessor::ResetLayout::AUTOMATIC;
-    if (!stage5InRange) {
-      return fail("--reset-layout needs stage 5 (page layout) in the stage range");
+  }
+  // Every page layout option needs stage 5 in the stage range (start <= 5 <= end); the message
+  // names each one given.
+  if (!((opt.startFilter <= 4) && (opt.endFilter >= 4))) {
+    QStringList given;
+    for (const QString& name : {"margins-mm", "align", "first-page", "page-side", "reset-layout"}) {
+      if (p.isSet(name) || (name == "reset-layout" && p.isSet(resetLayoutAll))) {
+        given << "--" + name;
+      }
+    }
+    if (!given.isEmpty()) {
+      return fail(given.join(", ") + ": page layout options need stage 5 (page layout) in the stage range");
     }
   }
   // Page layout outcome per page (in the run's first stage >= 5): sides with -v, spared pages.

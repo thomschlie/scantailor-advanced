@@ -85,10 +85,12 @@ bool isAutomaticPageLayout(const page_layout::Params& params,
   const Alignment& alignment = params.alignment();
   const bool outerBottom = !alignment.isNull() && alignment.vertical() == Alignment::BOTTOM
                            && (alignment.horizontal() == Alignment::LEFT || alignment.horizontal() == Alignment::RIGHT);
-  const bool asOptions = outerBottom && sameMarginsMm(params.hardMarginsMM(), fromOptions.hardMarginsMM())
-                         && params.isAutoMarginsEnabled() == fromOptions.isAutoMarginsEnabled();
   // With auto margins the page layout stage overwrites the stored hard margins with computed
-  // ones, so their values say nothing about the page having been touched.
+  // ones, so their values say nothing about the page having been touched: ignored when auto
+  // margins are on for the page and in what the options (or the profile) give.
+  const bool asOptions = outerBottom && params.isAutoMarginsEnabled() == fromOptions.isAutoMarginsEnabled()
+                         && (params.isAutoMarginsEnabled()
+                             || sameMarginsMm(params.hardMarginsMM(), fromOptions.hardMarginsMM()));
   const bool autoMarginsAsProfile = params.isAutoMarginsEnabled() && profileDefaults.isAutoMarginsEnabled()
                                     && params.alignment() == profileDefaults.alignment();
   return asProfile || asOptions || autoMarginsAsProfile;
@@ -216,7 +218,8 @@ int BatchProcessor::process(const Options& options) {
   const std::vector<std::pair<QString, PageSide>> pageSideAnchors = resolvePageSideAnchors(options);
   // So is an anchor on a split scan, where the split is known: in a loaded project (page split
   // keeps its stored results) or a run that starts after page split. A new project's scans are
-  // split in this run: checked again when stage 5 is reached, before it runs.
+  // split in this run: checked again when stage 5 is reached, before it runs (scantailor-cli
+  // takes --page-side only with --project, so this is for other callers).
   if (m_reader || options.startFilter > m_stages->pageSplitFilterIdx()) {
     checkAnchorsNotSplit(pageSideAnchors);
   }
