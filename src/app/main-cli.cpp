@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <iostream>
 
+#include "BatchReport.h"
 #include "Dpi.h"
 #include "PageInfo.h"
 #include "filters/output/ColorParams.h"
@@ -127,6 +128,7 @@ int main(int argc, char* argv[]) {
   p.addOption({"source-dpi", "Resolution of the input images, overriding the files (images mode).", "dpi"});
   p.addOption({"rtl", "Right-to-left page order (images mode)."});
   p.addOption({{"j", "threads"}, "Parallel pages per stage. Default: number of CPUs.", "n"});
+  p.addOption({"report", "Write a per-page JSON report (settings of every stage).", "file"});
   p.addOption({{"v", "verbose"}, "Print stages and pages."});
   p.process(app);
 
@@ -236,6 +238,11 @@ int main(int argc, char* argv[]) {
       }
       if (verbose) {
         std::cout << "project: " << saveTo.toStdString() << std::endl;
+      }
+    }
+    if (p.isSet("report")) {
+      if (!writeBatchReport(*batch, p.value("report"))) {
+        return fail("cannot write report: " + p.value("report"));
       }
     }
     if (failed > 0) {
