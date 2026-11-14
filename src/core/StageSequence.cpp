@@ -3,6 +3,7 @@
 
 #include "StageSequence.h"
 
+#include "PageInfo.h"
 #include "ProjectPages.h"
 
 StageSequence::StageSequence(const std::shared_ptr<ProjectPages>& pages,
@@ -47,4 +48,24 @@ int StageSequence::findFilter(const FilterPtr& filter) const {
     ++idx;
   }
   return -1;
+}
+
+void StageSequence::loadDefaultSettings(const PageInfo& page) const {
+  for (const FilterPtr& filter : m_filters) {
+    filter->loadDefaultSettings(page);
+  }
+}
+
+StageSequence::Propagation StageSequence::propagationOnStageChange(const int fromIdx,
+                                                                   const int toIdx,
+                                                                   const int fixOrientationFilterIdx,
+                                                                   const int selectContentFilterIdx) {
+  Propagation propagation;
+  propagation.contentBoxes = (fromIdx <= selectContentFilterIdx) && (toIdx > selectContentFilterIdx);
+  propagation.pageOrientations = (fromIdx <= fixOrientationFilterIdx) && (toIdx > fixOrientationFilterIdx);
+  return propagation;
+}
+
+StageSequence::Propagation StageSequence::propagationOnStageChange(const int fromIdx, const int toIdx) const {
+  return propagationOnStageChange(fromIdx, toIdx, m_fixOrientationFilterIdx, m_selectContentFilterIdx);
 }

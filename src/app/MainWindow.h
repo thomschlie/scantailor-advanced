@@ -52,6 +52,7 @@ class PageOrientationPropagator;
 class ProjectCreationContext;
 class ProjectOpeningContext;
 class CompositeCacheDrivenTask;
+class CompositeTaskFactory;
 class TabbedDebugImages;
 class ProcessingTaskQueue;
 class FixDpiDialog;
@@ -255,8 +256,6 @@ class MainWindow : public QMainWindow, private FilterUiInterface, private Ui::Ma
 
   bool isBelowSelectContent(int filterIdx) const;
 
-  bool isBelowFixOrientation(int filterIdx) const;
-
   bool isOutputFilter() const;
 
   bool isOutputFilter(int filterIdx) const;
@@ -286,6 +285,8 @@ class MainWindow : public QMainWindow, private FilterUiInterface, private Ui::Ma
   void removeFromProject(const std::set<PageId>& pages);
 
   void eraseOutputFiles(const std::set<PageId>& pages);
+
+  CompositeTaskFactory compositeTaskFactory() const;
 
   BackgroundTaskPtr createCompositeTask(const PageInfo& page, int lastFilterIdx, bool batch, bool debug);
 

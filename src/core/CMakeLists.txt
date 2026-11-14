@@ -80,6 +80,7 @@ set(common_sources
     BeforeOrAfter.h
     FilterResult.h
     CompositeCacheDrivenTask.h
+    CompositeTaskFactory.cpp CompositeTaskFactory.h
     ChangedStateItemDelegate.h
     PageOrderProvider.h PageOrderProvider.cpp
     PageOrderOption.h
