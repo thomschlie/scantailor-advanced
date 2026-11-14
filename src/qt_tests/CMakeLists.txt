@@ -1,5 +1,6 @@
 set(sources
     main.cpp
+    tst_batch_qt.cpp
     tst_core_qt.cpp
     tst_ux_qt.cpp)
 
