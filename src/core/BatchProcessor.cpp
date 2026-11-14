@@ -47,6 +47,7 @@
 #include "filters/page_layout/Filter.h"
 #include "filters/page_layout/Params.h"
 #include "filters/page_layout/Settings.h"
+#include "filters/page_layout/Utils.h"
 #include "filters/select_content/Filter.h"
 
 namespace {
@@ -182,8 +183,20 @@ int BatchProcessor::process(const Options& options) {
   const std::shared_ptr<page_layout::Settings>& pageLayoutSettings = m_stages->pageLayoutFilter()->settings();
   // Pages that got the page layout defaults in this run and still wait for the page layout options.
   std::set<PageId> pageLayoutPending;
+  bool pageLayoutApplied = false;
+  // Checked before any stage runs: an unknown image is an error, not a half-processed project.
+  const std::vector<std::pair<QString, PageSide>> pageSideAnchors = resolvePageSideAnchors(options);
 
   for (int stage = options.startFilter; stage <= options.endFilter; ++stage) {
+    // Pages without page layout settings, noted before the content box propagation of
+    // enterStage() gives them upstream's built-in ones (page_layout::Settings::setContentSizeMM).
+    if (pageLayoutOptions) {
+      for (const PageInfo& page : m_pages->toPageSequence(PAGE_VIEW)) {
+        if (pageLayoutSettings->isParamsNull(page.id())) {
+          pageLayoutPending.insert(page.id());
+        }
+      }
+    }
     // A run that starts at a stage enters it from nowhere (-1), so whatever lies above is propagated.
     enterStage(stage, (stage == options.startFilter) ? -1 : stage - 1);
     // Re-read the page sequence every stage: "Split Pages" may change the number of pages.
@@ -196,10 +209,12 @@ int BatchProcessor::process(const Options& options) {
       }
       m_stages->loadDefaultSettings(page);
     }
-    // --margins-mm / --align: once the page sequence is final (page split done), before "Margins".
-    if (pageLayoutOptions && stage >= m_stages->pageLayoutFilterIdx()) {
-      applyPageLayoutOptions(options, pageLayoutPending);
+    // --margins-mm / --align: once the page sequence is final (page split
+    // done), before "Margins"; only in the run's first stage >= 5.
+    if (pageLayoutOptions && !pageLayoutApplied && stage >= m_stages->pageLayoutFilterIdx()) {
+      applyPageLayoutOptions(options, pageLayoutPending, pageSideAnchors);
       pageLayoutPending.clear();
+      pageLayoutApplied = true;
     }
     // --include: the layout toggles of every page, set before "Select content" runs.
     if (stage == m_stages->selectContentFilterIdx() && options.layoutInclude >= 0) {
@@ -241,46 +256,114 @@ int BatchProcessor::process(const Options& options) {
   return failed.load();
 }
 
-void BatchProcessor::applyPageLayoutOptions(const Options& options, const std::set<PageId>& pageIds) const {
+std::vector<std::pair<QString, BatchProcessor::PageSide>> BatchProcessor::resolvePageSideAnchors(
+    const Options& options) const {
+  std::vector<QString> files;
+  for (const PageInfo& page : m_pages->toPageSequence(IMAGE_VIEW)) {
+    const QString& file = page.imageId().filePath();
+    if (std::find(files.begin(), files.end(), file) == files.end()) {
+      files.push_back(file);
+    }
+  }
+  std::vector<std::pair<QString, PageSide>> anchors;
+  for (const PageSideAnchor& anchor : options.pageSideAnchors) {
+    const bool byPath = anchor.image.contains('/');
+    const QString wanted = byPath ? QFileInfo(anchor.image).absoluteFilePath() : anchor.image;
+    std::vector<QString> matches;
+    for (const QString& file : files) {
+      const QFileInfo fi(file);
+      if ((byPath ? fi.absoluteFilePath() : fi.fileName()) == wanted) {
+        matches.push_back(file);
+      }
+    }
+    if (matches.empty()) {
+      throw std::runtime_error(("--page-side: no image file " + anchor.image + " in the project").toStdString());
+    }
+    if (matches.size() > 1) {
+      throw std::runtime_error(
+          ("--page-side: " + anchor.image + " names several image files of the project; give its path").toStdString());
+    }
+    for (const auto& known : anchors) {
+      if (known.first == matches.front()) {
+        throw std::runtime_error(("--page-side: " + anchor.image + " given twice").toStdString());
+      }
+    }
+    anchors.emplace_back(matches.front(), anchor.side);
+  }
+  return anchors;
+}
+
+void BatchProcessor::applyPageLayoutOptions(const Options& options,
+                                            const std::set<PageId>& pageIds,
+                                            const std::vector<std::pair<QString, PageSide>>& anchors) const {
   const std::shared_ptr<page_layout::Settings>& settings = m_stages->pageLayoutFilter()->settings();
   const PageSequence pages = m_pages->toPageSequence(PAGE_VIEW);
   const bool rightToLeft = (m_pages->layoutDirection() == Qt::RightToLeft);
-  size_t index = 0;
+  // Single pages: the first one is a recto (or --first-page), then they alternate; an anchor
+  // (--page-side) restarts the alternation at the first page of its image file.
+  PageSide runSide = options.firstPageSide.value_or(rightToLeft ? PageSide::LEFT : PageSide::RIGHT);
+  size_t runStart = 0;
+  std::set<QString> anchorsSeen;
+  size_t position = 0;
   for (const PageInfo& page : pages) {
-    const size_t position = index++;
-    if (pageIds.count(page.id()) == 0) {
-      continue;  // has settings of its own (or vanished in page split)
+    const QString& file = page.imageId().filePath();
+    for (const auto& anchor : anchors) {
+      if (anchor.first == file && anchorsSeen.insert(file).second) {
+        runSide = anchor.second;
+        runStart = position;
+      }
     }
+    std::optional<PageSide> side;
+    if (options.alignOuterBottom) {
+      switch (page.id().subPage()) {
+        case PageId::LEFT_PAGE:
+          side = PageSide::LEFT;
+          break;
+        case PageId::RIGHT_PAGE:
+          side = PageSide::RIGHT;
+          break;
+        default:
+          if ((position - runStart) % 2 == 0) {
+            side = runSide;
+          } else {
+            side = (runSide == PageSide::LEFT) ? PageSide::RIGHT : PageSide::LEFT;
+          }
+          break;
+      }
+    }
+    ++position;
+
     const std::unique_ptr<page_layout::Params> params = settings->getPageParams(page.id());
     if (!params) {
-      continue;
+      continue;  // vanished in page split
     }
-    Margins margins = params->hardMarginsMM();
-    bool autoMargins = params->isAutoMarginsEnabled();
+    // What the run gives this page: the profile's defaults, then the options on top.
+    const page_layout::Params profileDefaults = page_layout::Utils::buildDefaultParams(page.metadata().dpi());
+    Margins margins = profileDefaults.hardMarginsMM();
+    bool autoMargins = profileDefaults.isAutoMarginsEnabled();
     if (options.pageLayoutMarginsMm) {
       margins = *options.pageLayoutMarginsMm;
       autoMargins = false;
     }
-    page_layout::Alignment alignment = params->alignment();
-    if (options.alignOuterBottom) {
-      bool left;
-      switch (page.id().subPage()) {
-        case PageId::LEFT_PAGE:
-          left = true;
-          break;
-        case PageId::RIGHT_PAGE:
-          left = false;
-          break;
-        default:
-          // Single page: the first one is a recto, then they alternate.
-          left = ((position % 2) == 0) == rightToLeft;
-          break;
-      }
-      alignment = page_layout::Alignment(page_layout::Alignment::BOTTOM,
-                                         left ? page_layout::Alignment::LEFT : page_layout::Alignment::RIGHT);
+    page_layout::Alignment alignment = profileDefaults.alignment();
+    if (side) {
+      alignment = page_layout::Alignment(page_layout::Alignment::BOTTOM, (*side == PageSide::LEFT)
+                                                                             ? page_layout::Alignment::LEFT
+                                                                             : page_layout::Alignment::RIGHT);
     }
-    settings->setPageParams(page.id(), page_layout::Params(margins, params->pageRect(), params->contentRect(),
-                                                           params->contentSizeMM(), alignment, autoMargins));
+    // Page and content rectangles stay as stored; the page layout stage recomputes them.
+    const page_layout::Params fromRun(margins, params->pageRect(), params->contentRect(), params->contentSizeMM(),
+                                      alignment, autoMargins);
+
+    // A page with settings of its own (or from an earlier run) keeps them.
+    const PageLayoutOutcome outcome
+        = (pageIds.count(page.id()) == 0) ? PageLayoutOutcome::KEPT : PageLayoutOutcome::SET;
+    if (outcome == PageLayoutOutcome::SET) {
+      settings->setPageParams(page.id(), fromRun);
+    }
+    if (options.pageLayoutDecided) {
+      options.pageLayoutDecided(page, outcome, side);
+    }
   }
 }
 

@@ -23,9 +23,11 @@
 #include <cstdlib>
 #include <iostream>
 #include <optional>
+#include <string>
 
 #include "BatchReport.h"
 #include "Dpi.h"
+#include "PageId.h"
 #include "PageInfo.h"
 #include "filters/output/ColorParams.h"
 #include "filters/select_content/LayoutDetector.h"
@@ -135,6 +137,15 @@ int main(int argc, char* argv[]) {
                "sequence (the first page is a recto: right for left-to-right, left for --rtl), alternating. "
                "Needs stage 5 or 6 in the stage range. Default: from the profile.",
                "outer-bottom"});
+  p.addOption({"first-page",
+               "With --align outer-bottom: side of the first single page. Default: right (left with --rtl).",
+               "left|right"});
+  p.addOption({"page-side",
+               "With --align outer-bottom, repeatable: single pages alternate anew from the first page of this "
+               "image file, starting with this side (a missing or extra scan). The image is a file name as in the "
+               "project (e.g. page-012.jpg), or a path if it contains '/'. Halves of split scans keep page "
+               "split's side. Needs stage 5 in the stage range.",
+               "image=left|right"});
   p.addOption({"start-stage", "First stage to run (1-6). Default 1.", "n"});
   p.addOption({"end-stage", "Last stage to run (1-6). Default 6.", "n"});
   p.addOption({"source-dpi", "Resolution of the input images, overriding the files (images mode).", "dpi"});
@@ -214,6 +225,65 @@ int main(int argc, char* argv[]) {
   }
   if ((opt.pageLayoutMarginsMm || opt.alignOuterBottom) && opt.endFilter < 4) {
     return fail("--margins-mm and --align need stage 5 (page layout) or 6 in the stage range");
+  }
+  const auto parseSide = [](const QString& value, BatchProcessor::PageSide* side) {
+    if (value == "left" || value == "right") {
+      *side = (value == "left") ? BatchProcessor::PageSide::LEFT : BatchProcessor::PageSide::RIGHT;
+      return true;
+    }
+    return false;
+  };
+  const bool stage5InRange = (opt.startFilter <= 4) && (opt.endFilter >= 4);
+  if (p.isSet("first-page")) {
+    BatchProcessor::PageSide side;
+    if (!parseSide(p.value("first-page"), &side)) {
+      return fail("--first-page is left or right");
+    }
+    opt.firstPageSide = side;
+  }
+  for (const QString& value : p.values("page-side")) {
+    const int eq = value.lastIndexOf('=');
+    BatchProcessor::PageSide side;
+    if (eq <= 0 || !parseSide(value.mid(eq + 1), &side)) {
+      return fail("--page-side is <image file>=left or <image file>=right");
+    }
+    opt.pageSideAnchors.push_back({value.left(eq), side});
+  }
+  if (opt.firstPageSide || !opt.pageSideAnchors.empty()) {
+    if (!opt.alignOuterBottom) {
+      return fail("--first-page and --page-side need --align outer-bottom");
+    }
+    if (!stage5InRange) {
+      return fail("--first-page and --page-side need stage 5 (page layout) in the stage range");
+    }
+  }
+  // Page layout outcome per page (in the run's first stage >= 5): sides with -v.
+  const auto pageName = [](const PageInfo& page) {
+    std::string name = page.imageId().filePath().toStdString();
+    if (page.id().subPage() == PageId::LEFT_PAGE) {
+      name += " (left half)";
+    } else if (page.id().subPage() == PageId::RIGHT_PAGE) {
+      name += " (right half)";
+    }
+    return name;
+  };
+  if (verbose) {
+    opt.pageLayoutDecided = [&pageName](const PageInfo& page, const BatchProcessor::PageLayoutOutcome outcome,
+                                        const std::optional<BatchProcessor::PageSide> side) {
+      std::cout << "  page layout: " << pageName(page);
+      if (side) {
+        std::cout << ": " << ((*side == BatchProcessor::PageSide::LEFT) ? "left" : "right");
+      }
+      switch (outcome) {
+        case BatchProcessor::PageLayoutOutcome::SET:
+          std::cout << " (set)";
+          break;
+        case BatchProcessor::PageLayoutOutcome::KEPT:
+          std::cout << " (kept: has stage-5 settings)";
+          break;
+      }
+      std::cout << std::endl;
+    };
   }
   std::optional<bool> deskewFallback;
   if (p.isSet("deskew-fallback")) {

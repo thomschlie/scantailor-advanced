@@ -147,6 +147,12 @@ QRect inkBox(const QImage& image) {
   }
   return (right < 0) ? QRect() : QRect(QPoint(left, top), QPoint(right, bottom));
 }
+
+page_layout::Alignment outerBottom(const BatchProcessor::PageSide side) {
+  return page_layout::Alignment(page_layout::Alignment::BOTTOM, (side == BatchProcessor::PageSide::LEFT)
+                                                                    ? page_layout::Alignment::LEFT
+                                                                    : page_layout::Alignment::RIGHT);
+}
 }  // namespace
 
 void TestBatchQt::initTestCase() {
@@ -298,4 +304,46 @@ void TestBatchQt::testOuterBottomRightToLeft() {
   // Without --margins-mm the profile's margins stay.
   QVERIFY(sameMargins(pageLayoutParams(batch, pages.pageAt(static_cast<size_t>(0)).id()).hardMarginsMM(),
                       Margins(10, 5, 10, 5)));
+}
+
+void TestBatchQt::testFirstPageAndPageSide() {
+  using Side = BatchProcessor::PageSide;
+  QDir().mkpath(m_dir.filePath("sides-in"));
+  const QStringList images = pageCopies(m_image, m_dir.filePath("sides-in"), 4);
+  QCOMPARE(images.size(), 4);
+  BatchProcessor batch(images, m_dir.filePath("sides"), Qt::LeftToRight, 0);
+  BatchProcessor::Options options = allStages(batch);
+  options.endFilter = batch.stages()->pageLayoutFilterIdx();
+  options.alignOuterBottom = true;
+
+  // An image that is not in the project: an error before any stage runs.
+  options.pageSideAnchors = {{"missing.png", Side::LEFT}};
+  bool threw = false;
+  try {
+    batch.process(options);
+  } catch (const std::runtime_error&) {
+    threw = true;
+  }
+  QVERIFY(threw);
+  const PageSequence pages = batch.pages()->toPageSequence(PAGE_VIEW);
+  QCOMPARE(static_cast<int>(pages.numPages()), 4);
+  QVERIFY(batch.stages()->pageLayoutFilter()->settings()->isParamsNull(pages.pageAt(static_cast<size_t>(0)).id()));
+
+  // The first page on the left (a book that starts with a verso); the third page anchored by
+  // its file name, the fourth by its path: left again, as after a missing scan.
+  options.firstPageSide = Side::LEFT;
+  options.pageSideAnchors = {{"copy2.png", Side::LEFT}, {images[3], Side::LEFT}};
+  std::vector<std::optional<Side>> reported;
+  options.pageLayoutDecided
+      = [&reported](const PageInfo&, const BatchProcessor::PageLayoutOutcome outcome, const std::optional<Side> side) {
+          QCOMPARE(outcome, BatchProcessor::PageLayoutOutcome::SET);
+          reported.push_back(side);
+        };
+  QCOMPARE(batch.process(options), 0);
+  const Side expected[4] = {Side::LEFT, Side::RIGHT, Side::LEFT, Side::LEFT};
+  QCOMPARE(static_cast<int>(reported.size()), 4);
+  for (int i = 0; i < 4; ++i) {
+    QCOMPARE(pageLayoutParams(batch, pages.pageAt(static_cast<size_t>(i)).id()).alignment(), outerBottom(expected[i]));
+    QVERIFY(reported[i] && *reported[i] == expected[i]);
+  }
 }

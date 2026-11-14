@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <vector>
 
 #include "CompositeTaskFactory.h"
 #include "Margins.h"
@@ -42,6 +43,23 @@ class BatchProcessor {
   DECLARE_NON_COPYABLE(BatchProcessor)
 
  public:
+  enum class PageSide { LEFT, RIGHT };
+
+  // --page-side: from the first page of this image file on, single pages alternate anew,
+  // starting with this side. The image is a file name (no '/'), matched against the names of
+  // the project's image files, or a path (relative to the current directory), matched against
+  // their full paths.
+  struct PageSideAnchor {
+    QString image;
+    PageSide side;
+  };
+
+  // What happened to a page's page layout in the run's first stage >= 5.
+  enum class PageLayoutOutcome {
+    SET,  // defaults + options set in this run
+    KEPT  // has settings of its own
+  };
+
   struct Options {
     /** First and last stage to run, as indices into the stage sequence. */
     int startFilter = 0;
@@ -60,12 +78,22 @@ class BatchProcessor {
     // as page split gives them; a single page by its position in the page sequence (the first
     // page is a recto: on the right for left-to-right books, on the left for right-to-left).
     bool alignOuterBottom = false;
+    // Side of the first single page (with alignOuterBottom); none = right for left-to-right
+    // books, left for right-to-left.
+    std::optional<PageSide> firstPageSide;
+    // Restarts of the alternation (with alignOuterBottom). An image that is not in the project,
+    // or a file name that matches several, makes process() throw before any stage runs.
+    std::vector<PageSideAnchor> pageSideAnchors;
 
     // Progress callbacks, optional. They are never called concurrently,
     // but may be called from worker threads.
     std::function<void(int stage, int numPages)> stageStarted;
     std::function<void(const PageInfo& page)> pageProcessed;
     std::function<void(const PageInfo& page, const QString& error)> pageFailed;
+    // Once per page in the run's first stage >= 5, when page layout options are given;
+    // side = the page's left/right (with alignOuterBottom), whether or not it was set.
+    std::function<void(const PageInfo& page, PageLayoutOutcome outcome, std::optional<PageSide> side)>
+        pageLayoutDecided;
   };
 
   /**
@@ -121,7 +149,13 @@ class BatchProcessor {
 
   void enterStage(int stage, int prevStage);
 
-  void applyPageLayoutOptions(const Options& options, const std::set<PageId>& pageIds) const;
+  void applyPageLayoutOptions(const Options& options,
+                              const std::set<PageId>& pageIds,
+                              const std::vector<std::pair<QString, PageSide>>& anchors) const;
+
+  // The --page-side anchors as (image file path, side); throws std::runtime_error for an image
+  // not in the project or a file name that matches several image files.
+  std::vector<std::pair<QString, PageSide>> resolvePageSideAnchors(const Options& options) const;
 
   std::shared_ptr<ProjectPages> m_pages;
   std::shared_ptr<StageSequence> m_stages;
