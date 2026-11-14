@@ -93,3 +93,14 @@ if (Qt6_FOUND AND WIN32)
 endif()
 
 translation_sources(${target_name} ${gui_only_sources} ${gui_only_ui_files})
+
+if (BUILD_CLI)
+  # scantailor-cli: headless batch processing, without the GUI sources.
+  add_executable(scantailor-cli main-cli.cpp)
+  target_link_libraries(scantailor-cli PRIVATE core ${EXTRA_LIBS})
+  target_include_directories(
+      scantailor-cli
+      PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"
+      "$<TARGET_PROPERTY:TIFF::TIFF,INTERFACE_INCLUDE_DIRECTORIES>")
+  install(TARGETS scantailor-cli RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+endif()

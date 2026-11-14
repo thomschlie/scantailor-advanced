@@ -10,6 +10,7 @@ If the video doesn't play, you may to have to login into your vimeo account.
 ## Contents:
 * [Description](#description)
 * [Building](#building)
+* [Command-line interface (scantailor-cli)](#command-line-interface-scantailor-cli)
 * [About this fork](#about-this-fork)
 * [Features](#features)
   * [**ScanTailor Enhanced**](#scantailor-enhanced)
@@ -90,6 +91,45 @@ Go to [this repository](https://github.com/ScanTailor-Advanced/scantailor-libs-b
 **Linux – GitHub Releases (.deb / AppImage, [issue #64](https://github.com/ScanTailor-Advanced/scantailor-advanced/issues/64)):** Version tags matching `v*` run [`.github/workflows/release.yml`](.github/workflows/release.yml), which produces a `.deb` ([`build-deb.sh`](build-deb.sh)) and an AppImage attached to the GitHub Release when the workflow is enabled. The AppImage is built on **Ubuntu 24.04** (`ubuntu-latest`) and requires a compatible **glibc** (typically **Ubuntu 24.04+** or equivalent). On **Ubuntu 22.04** and similar older bases, use the **`.deb`** package or build from source. Report problems with those binaries in [issue #64](https://github.com/ScanTailor-Advanced/scantailor-advanced/issues/64).
 
 **Community examples / test data:** See also [scantailor-testing](https://github.com/ImageProcessing-ElectronicPublications/scantailor-testing) (community repository; issue [#43](https://github.com/ScanTailor-Advanced/scantailor-advanced/issues/43)).
+
+## Command-line interface (scantailor-cli)
+
+`scantailor-cli` processes a whole project without the GUI, for example on a server or in a script.
+It runs the stages one after another over all pages, as if you selected each stage in the GUI and
+started batch processing there: pages without settings get the default parameters (the built-in
+"Default" profile, or the one given with `--profile`), and the result is the same as a GUI batch run.
+
+Settings made by hand are kept: a page that already has settings for a stage in the project (for
+example a content box or a deskew angle you corrected in the GUI) keeps them, only pages without
+settings get the defaults. A typical workflow is to process all pages with the CLI, check the
+result in the GUI, correct the few pages that need it, and run the CLI again on the saved project.
+
+```bash
+# New project from images: all six stages, output and project.ScanTailor in out/
+scantailor-cli --source-dpi 600 -o out scans/*.tif
+
+# An existing project, e.g. after fixing pages in the GUI: stages 4 (select content) to 6 (output)
+scantailor-cli --project out/project.ScanTailor --start-stage 4
+
+# Colour output at 300 dpi for pages without settings, on top of a profile saved in the GUI
+scantailor-cli --profile MyProfile --color-mode color --output-dpi 300 -o out scans/*.jpg
+```
+
+Stages are numbered as in the GUI: 1 fix orientation, 2 split pages, 3 deskew, 4 select content,
+5 margins, 6 output. `scantailor-cli --help` lists all options.
+
+**Exit status:** `0` all pages processed; `1` some pages failed (each one is named on stderr, the
+others are processed and the project is saved); `2` error before or after processing (bad
+options, unreadable images or project, project file not writable).
+
+**No display needed:** the CLI uses Qt's `offscreen` platform plugin unless `QT_QPA_PLATFORM` is
+set. It is part of Qt's base package on most systems; if it is missing, `scantailor-cli` says so
+and stops (set `QT_QPA_PLATFORM` to another available platform, e.g. `xcb`, as a workaround).
+
+**Flatpak:** `flatpak run --command=scantailor-cli org.scantailor.Advanced [options]`.
+
+The CLI shares the GUI's settings and saved profiles. It has been tested on Linux; Windows and
+macOS builds include it but are untested.
 
 ## About this fork
 
@@ -464,6 +504,8 @@ make -j$(nproc)
 ```
 
 For **offline or minimal chroot** builds where unit tests cannot be built (issue #61), use `cmake -DBUILD_TESTS=OFF ..` to skip the test targets.
+
+The command-line interface `scantailor-cli` (see [Command-line interface](#command-line-interface-scantailor-cli)) is built and installed alongside the GUI; use `cmake -DBUILD_CLI=OFF ..` to leave it out.
 
 The executable will be in the `build` directory. To install system-wide: `sudo make install`.
 
