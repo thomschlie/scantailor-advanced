@@ -24,6 +24,7 @@
 #include "Application.h"
 #include "AutoRemovingFile.h"
 #include "BasicImageView.h"
+#include "CompositeTaskFactory.h"
 #include "ContentBoxPropagator.h"
 #include "DebugImageView.h"
 #include "DebugImages.h"
@@ -34,7 +35,6 @@
 #include "ImageInfo.h"
 #include "ImageMetadataLoader.h"
 #include "ImageViewBase.h"
-#include "LoadFileTask.h"
 #include "LoadFilesStatusDialog.h"
 #include "NewOpenProjectPanel.h"
 #include "OutOfMemoryDialog.h"
@@ -63,19 +63,7 @@
 #include "Utils.h"
 #include "WorkerThreadPool.h"
 #include "config.h"
-#include "filters/deskew/CacheDrivenTask.h"
-#include "filters/deskew/Task.h"
-#include "filters/fix_orientation/CacheDrivenTask.h"
-#include "filters/fix_orientation/Task.h"
-#include "filters/output/CacheDrivenTask.h"
 #include "filters/output/TabbedImageView.h"
-#include "filters/output/Task.h"
-#include "filters/page_layout/CacheDrivenTask.h"
-#include "filters/page_layout/Task.h"
-#include "filters/page_split/CacheDrivenTask.h"
-#include "filters/page_split/Task.h"
-#include "filters/select_content/CacheDrivenTask.h"
-#include "filters/select_content/Task.h"
 #include "ui_AboutDialog.h"
 #include "ui_BatchProcessingLowerPanel.h"
 #include "ui_RemovePagesDialog.h"
@@ -1129,18 +1117,16 @@ void MainWindow::filterSelectionChanged(const QItemSelection& selected) {
     m_batchQueue->cancelAndClear();
   }
 
-  const bool wasBelowFixOrientation = isBelowFixOrientation(m_curFilter);
-  const bool wasBelowSelectContent = isBelowSelectContent(m_curFilter);
+  const int prevFilter = m_curFilter;
   m_curFilter = selected.front().top();
-  const bool nowBelowFixOrientation = isBelowFixOrientation(m_curFilter);
-  const bool nowBelowSelectContent = isBelowSelectContent(m_curFilter);
+  const StageSequence::Propagation propagation = m_stages->propagationOnStageChange(prevFilter, m_curFilter);
 
   m_stages->filterAt(m_curFilter)->selected();
 
   updateSortOptions();
 
   // Propagate context boxes down the stage list, if necessary.
-  if (!wasBelowSelectContent && nowBelowSelectContent) {
+  if (propagation.contentBoxes) {
     // IMPORTANT: this needs to go before resetting thumbnails,
     // because it may affect them.
     if (m_contentBoxPropagator) {
@@ -1148,7 +1134,7 @@ void MainWindow::filterSelectionChanged(const QItemSelection& selected) {
     }  // Otherwise probably no project is loaded.
   }
   // Propagate page orientations (that might have changed) to the "Split Pages" stage.
-  if (!wasBelowFixOrientation && nowBelowFixOrientation) {
+  if (propagation.pageOrientations) {
     // IMPORTANT: this needs to go before resetting thumbnails,
     // because it may affect them.
     if (m_pageOrientationPropagator) {
@@ -1229,9 +1215,7 @@ void MainWindow::startBatchProcessing() {
   // selection was not at the first page).
   const PageSequence sequence(m_thumbSequence->toPageSequence());
   for (const PageInfo& page : sequence) {
-    for (int i = 0; i < m_stages->count(); i++) {
-      m_stages->filterAt(i)->loadDefaultSettings(page);
-    }
+    m_stages->loadDefaultSettings(page);
     m_batchQueue->addProcessingTask(page, createCompositeTask(page, m_curFilter, /*batch=*/true, m_debug));
   }
 
@@ -1628,10 +1612,6 @@ bool MainWindow::isBelowSelectContent(const int filterIdx) const {
   return filterIdx > m_stages->selectContentFilterIdx();
 }
 
-bool MainWindow::isBelowFixOrientation(int filterIdx) const {
-  return filterIdx > m_stages->fixOrientationFilterIdx();
-}
-
 bool MainWindow::isOutputFilter() const {
   return isOutputFilter(m_curFilter);
 }
@@ -1695,9 +1675,7 @@ void MainWindow::loadPageInteractive(const PageInfo& page) {
     return;
   }
 
-  for (int i = 0; i < m_stages->count(); i++) {
-    m_stages->filterAt(i)->loadDefaultSettings(page);
-  }
+  m_stages->loadDefaultSettings(page);
 
   if (!isBatchProcessingInProgress()) {
     if (m_imageFrameLayout->indexOf(m_processingIndicationWidget.get()) != -1) {
@@ -2056,80 +2034,20 @@ void MainWindow::eraseOutputFiles(const std::set<PageId>& pages) {
   }
 }
 
+CompositeTaskFactory MainWindow::compositeTaskFactory() const {
+  return CompositeTaskFactory(m_stages, m_pages, m_thumbnailCache, m_outFileNameGen);
+}
+
 BackgroundTaskPtr MainWindow::createCompositeTask(const PageInfo& page,
                                                   const int lastFilterIdx,
                                                   const bool batch,
-                                                  bool debug) {
-  std::shared_ptr<fix_orientation::Task> fixOrientationTask;
-  std::shared_ptr<page_split::Task> pageSplitTask;
-  std::shared_ptr<deskew::Task> deskewTask;
-  std::shared_ptr<select_content::Task> selectContentTask;
-  std::shared_ptr<page_layout::Task> pageLayoutTask;
-  std::shared_ptr<output::Task> outputTask;
-
-  if (batch) {
-    debug = false;
-  }
-
-  if (lastFilterIdx >= m_stages->outputFilterIdx()) {
-    outputTask = m_stages->outputFilter()->createTask(page.id(), m_thumbnailCache, m_outFileNameGen, batch, debug);
-    debug = false;
-  }
-  if (lastFilterIdx >= m_stages->pageLayoutFilterIdx()) {
-    pageLayoutTask = m_stages->pageLayoutFilter()->createTask(page.id(), outputTask, batch, debug);
-    debug = false;
-  }
-  if (lastFilterIdx >= m_stages->selectContentFilterIdx()) {
-    selectContentTask = m_stages->selectContentFilter()->createTask(page.id(), pageLayoutTask, batch, debug);
-    debug = false;
-  }
-  if (lastFilterIdx >= m_stages->deskewFilterIdx()) {
-    deskewTask = m_stages->deskewFilter()->createTask(page.id(), selectContentTask, batch, debug);
-    debug = false;
-  }
-  if (lastFilterIdx >= m_stages->pageSplitFilterIdx()) {
-    pageSplitTask = m_stages->pageSplitFilter()->createTask(page, deskewTask, batch, debug);
-    debug = false;
-  }
-  if (lastFilterIdx >= m_stages->fixOrientationFilterIdx()) {
-    fixOrientationTask = m_stages->fixOrientationFilter()->createTask(page.id(), pageSplitTask, batch);
-    debug = false;
-  }
-  assert(fixOrientationTask);
-  return std::make_shared<LoadFileTask>(batch ? BackgroundTask::BATCH : BackgroundTask::INTERACTIVE, page,
-                                        m_thumbnailCache, m_pages, fixOrientationTask);
-}  // MainWindow::createCompositeTask
+                                                  const bool debug) {
+  return compositeTaskFactory().createCompositeTask(page, lastFilterIdx, batch, debug);
+}
 
 std::shared_ptr<CompositeCacheDrivenTask> MainWindow::createCompositeCacheDrivenTask(const int lastFilterIdx) {
-  std::shared_ptr<fix_orientation::CacheDrivenTask> fixOrientationTask;
-  std::shared_ptr<page_split::CacheDrivenTask> pageSplitTask;
-  std::shared_ptr<deskew::CacheDrivenTask> deskewTask;
-  std::shared_ptr<select_content::CacheDrivenTask> selectContentTask;
-  std::shared_ptr<page_layout::CacheDrivenTask> pageLayoutTask;
-  std::shared_ptr<output::CacheDrivenTask> outputTask;
-
-  if (lastFilterIdx >= m_stages->outputFilterIdx()) {
-    outputTask = m_stages->outputFilter()->createCacheDrivenTask(m_outFileNameGen);
-  }
-  if (lastFilterIdx >= m_stages->pageLayoutFilterIdx()) {
-    pageLayoutTask = m_stages->pageLayoutFilter()->createCacheDrivenTask(outputTask);
-  }
-  if (lastFilterIdx >= m_stages->selectContentFilterIdx()) {
-    selectContentTask = m_stages->selectContentFilter()->createCacheDrivenTask(pageLayoutTask);
-  }
-  if (lastFilterIdx >= m_stages->deskewFilterIdx()) {
-    deskewTask = m_stages->deskewFilter()->createCacheDrivenTask(selectContentTask);
-  }
-  if (lastFilterIdx >= m_stages->pageSplitFilterIdx()) {
-    pageSplitTask = m_stages->pageSplitFilter()->createCacheDrivenTask(deskewTask);
-  }
-  if (lastFilterIdx >= m_stages->fixOrientationFilterIdx()) {
-    fixOrientationTask = m_stages->fixOrientationFilter()->createCacheDrivenTask(pageSplitTask);
-  }
-
-  assert(fixOrientationTask);
-  return fixOrientationTask;
-}  // MainWindow::createCompositeCacheDrivenTask
+  return compositeTaskFactory().createCompositeCacheDrivenTask(lastFilterIdx);
+}
 
 void MainWindow::updateDisambiguationRecords(const PageSequence& pages) {
   for (const PageInfo& page : pages) {

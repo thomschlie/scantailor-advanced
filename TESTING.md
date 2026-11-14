@@ -31,6 +31,7 @@ O ejecutar cada suite por separado:
 - **PageRange**: rangos de páginas y selección alternada.
 - **SelectContentApply**: aplicación del filtro de contenido.
 - **SmartFilenameOrdering**: ordenación natural de nombres de archivo.
+- **StageSequence**: the rule which data is propagated down the stage list when the current stage changes (content boxes below "Select Content", page orientations below "Fix Orientation"), shared by the GUI and `scantailor-cli`.
 - **Units**: conversión y representación de unidades (px, mm, cm, in).
 
 ### foundation_tests
@@ -59,8 +60,12 @@ O ejecutar cada suite por separado:
   - **testLineEditAcceptsInput**: entrada de texto con `QTest::keyClicks` y comprobación del texto.
   - **testCollapsibleGroupBoxStateAndSignal**: widget del proyecto: estado colapsado/expandido y señal `collapsedStateChanged`.
   - **testErrorWidgetCreation**: creación de `ErrorWidget` y comprobación de hijos (sin mostrar ventana).
+- **Batch processing (TestBatchQt)**: `BatchProcessor`, the engine of `scantailor-cli`, end to end on a synthetic page (lines of word-sized boxes tilted by 2°, drawn without antialiasing, so the page is the same on every run):
+  - **testAllStagesProduceOutput**: all six stages produce an output image of plausible size, and the automatic deskew angle undoes the tilt (±0.1°).
+  - **testManualSettingSurvives**: a deskew angle set by hand (as in the GUI) stays when the saved project is processed again from "Deskew" on.
+  - **testTwoRunsAreIdentical**: two runs on the same page write byte-identical output files.
 
-Los tests de UX usan `QApplication` y pueden simular interacción (clic, teclado) sin abrir ventanas; sirven de base para ampliar con más widgets o diálogos.
+Los tests usan la clase `Application` de ScanTailor (una `QApplication`) y pueden simular interacción (clic, teclado) sin abrir ventanas; sirven de base para ampliar con más widgets o diálogos.
 
 ## Tests de UI/UX y caminos de uso
 
