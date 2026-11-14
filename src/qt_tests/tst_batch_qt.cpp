@@ -12,13 +12,18 @@
 #include <PageSequence.h>
 #include <ProjectPages.h>
 #include <StageSequence.h>
+#include <filters/page_layout/Filter.h>
+#include <filters/page_layout/Params.h>
+#include <filters/page_layout/Settings.h>
 
+#include <QDir>
 #include <QDomDocument>
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
 #include <QPainter>
 #include <QtTest/QtTest>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 
@@ -99,6 +104,49 @@ QByteArray readFile(const QString& path) {
   QFile file(path);
   return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
+
+// Copies of the test page, one file per page.
+QStringList pageCopies(const QString& image, const QString& dir, const int count) {
+  QStringList files;
+  for (int i = 0; i < count; ++i) {
+    const QString file = QDir(dir).filePath(QString("copy%1.png").arg(i));
+    QFile::remove(file);
+    if (!QFile::copy(image, file)) {
+      return {};
+    }
+    files.append(file);
+  }
+  return files;
+}
+
+page_layout::Params pageLayoutParams(const BatchProcessor& batch, const PageId& pageId) {
+  const std::unique_ptr<page_layout::Params> params
+      = batch.stages()->pageLayoutFilter()->settings()->getPageParams(pageId);
+  return params ? *params
+                : page_layout::Params(Margins(), QRectF(), QRectF(), QSizeF(), page_layout::Alignment(), true);
+}
+
+bool sameMargins(const Margins& a, const Margins& b) {
+  return a.left() == b.left() && a.top() == b.top() && a.right() == b.right() && a.bottom() == b.bottom();
+}
+
+// Ink (dark pixels) bounding box of an output image.
+QRect inkBox(const QImage& image) {
+  const QImage gray = image.convertToFormat(QImage::Format_Grayscale8);
+  int left = gray.width(), right = -1, top = gray.height(), bottom = -1;
+  for (int y = 0; y < gray.height(); ++y) {
+    const uchar* line = gray.constScanLine(y);
+    for (int x = 0; x < gray.width(); ++x) {
+      if (line[x] < 128) {
+        left = std::min(left, x);
+        right = std::max(right, x);
+        top = std::min(top, y);
+        bottom = std::max(bottom, y);
+      }
+    }
+  }
+  return (right < 0) ? QRect() : QRect(QPoint(left, top), QPoint(right, bottom));
+}
 }  // namespace
 
 void TestBatchQt::initTestCase() {
@@ -178,4 +226,76 @@ void TestBatchQt::testTwoRunsAreIdentical() {
   const QByteArray first = readFile(outputs[0]);
   QVERIFY(!first.isEmpty());
   QVERIFY(first == readFile(outputs[1]));
+}
+
+void TestBatchQt::testOuterBottomLayout() {
+  using page_layout::Alignment;
+  QDir().mkpath(m_dir.filePath("outer-in"));
+  const QStringList images = pageCopies(m_image, m_dir.filePath("outer-in"), 3);
+  QCOMPARE(images.size(), 3);
+  BatchProcessor batch(images, m_dir.filePath("outer"), Qt::LeftToRight, 0);
+  // The third page has page layout settings of its own (as set by hand): larger margins, so
+  // the other two pages are smaller than the aggregate size and the alignment shows.
+  const PageId manual = batch.pages()->toPageSequence(PAGE_VIEW).pageAt(static_cast<size_t>(2)).id();
+  const page_layout::Params manualParams(Margins(6, 6, 6, 6), QRectF(), QRectF(), QSizeF(),
+                                         Alignment(Alignment::TOP, Alignment::HCENTER), false);
+  batch.stages()->pageLayoutFilter()->settings()->setPageParams(manual, manualParams);
+
+  BatchProcessor::Options options = allStages(batch);
+  options.pageLayoutMarginsMm = Margins(0, 0, 0, 11);
+  options.alignOuterBottom = true;
+  QCOMPARE(batch.process(options), 0);
+
+  const PageSequence pages = batch.pages()->toPageSequence(PAGE_VIEW);
+  QCOMPARE(static_cast<int>(pages.numPages()), 3);
+  QCOMPARE(pages.pageAt(static_cast<size_t>(2)).id(), manual);
+  // Single pages: the first is a recto (right page), then they alternate.
+  const Alignment::Horizontal expected[2] = {Alignment::RIGHT, Alignment::LEFT};
+  for (int i = 0; i < 2; ++i) {
+    const PageId id = pages.pageAt(static_cast<size_t>(i)).id();
+    const page_layout::Params params = pageLayoutParams(batch, id);
+    QCOMPARE(params.alignment(), Alignment(Alignment::BOTTOM, expected[i]));
+    QVERIFY(sameMargins(params.hardMarginsMM(), Margins(0, 0, 0, 11)));
+    QVERIFY(!params.isAutoMarginsEnabled());
+
+    // In the output the text sits at the outer edge, 11 mm above the bottom edge.
+    const QImage out = ImageLoader::load(batch.outputFileNameGenerator().filePathFor(id));
+    QVERIFY(!out.isNull());
+    QVERIFY(out.dotsPerMeterX() > 0);
+    const double pxPerMm = out.dotsPerMeterX() / 1000.0;
+    const QRect ink = inkBox(out);
+    QVERIFY(!ink.isNull());
+    const double outerMm = (expected[i] == Alignment::LEFT ? ink.left() : out.width() - 1 - ink.right()) / pxPerMm;
+    const double innerMm = (expected[i] == Alignment::LEFT ? out.width() - 1 - ink.right() : ink.left()) / pxPerMm;
+    const double bottomMm = (out.height() - 1 - ink.bottom()) / pxPerMm;
+    QVERIFY2(outerMm < 1.0, qPrintable(QString("page %1: outer margin %2 mm").arg(i).arg(outerMm)));
+    QVERIFY2(innerMm > 10.0, qPrintable(QString("page %1: inner margin %2 mm").arg(i).arg(innerMm)));
+    QVERIFY2(std::abs(bottomMm - 11.0) < 1.0, qPrintable(QString("page %1: bottom margin %2 mm").arg(i).arg(bottomMm)));
+  }
+  // The page with settings of its own keeps them.
+  const page_layout::Params kept = pageLayoutParams(batch, manual);
+  QCOMPARE(kept.alignment(), manualParams.alignment());
+  QVERIFY(sameMargins(kept.hardMarginsMM(), manualParams.hardMarginsMM()));
+}
+
+void TestBatchQt::testOuterBottomRightToLeft() {
+  using page_layout::Alignment;
+  QDir().mkpath(m_dir.filePath("rtl-in"));
+  const QStringList images = pageCopies(m_image, m_dir.filePath("rtl-in"), 2);
+  QCOMPARE(images.size(), 2);
+  BatchProcessor batch(images, m_dir.filePath("rtl"), Qt::RightToLeft, 0);
+  BatchProcessor::Options options = allStages(batch);
+  options.endFilter = batch.stages()->pageLayoutFilterIdx();
+  options.alignOuterBottom = true;
+  QCOMPARE(batch.process(options), 0);
+  const PageSequence pages = batch.pages()->toPageSequence(PAGE_VIEW);
+  QCOMPARE(static_cast<int>(pages.numPages()), 2);
+  // Right to left: the first page (a recto) is on the left.
+  QCOMPARE(pageLayoutParams(batch, pages.pageAt(static_cast<size_t>(0)).id()).alignment(),
+           Alignment(Alignment::BOTTOM, Alignment::LEFT));
+  QCOMPARE(pageLayoutParams(batch, pages.pageAt(static_cast<size_t>(1)).id()).alignment(),
+           Alignment(Alignment::BOTTOM, Alignment::RIGHT));
+  // Without --margins-mm the profile's margins stay.
+  QVERIFY(sameMargins(pageLayoutParams(batch, pages.pageAt(static_cast<size_t>(0)).id()).hardMarginsMM(),
+                      Margins(10, 5, 10, 5)));
 }

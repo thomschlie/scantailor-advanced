@@ -125,6 +125,16 @@ int main(int argc, char* argv[]) {
                "Default: from the profile (Default: bw).",
                "mode"});
   p.addOption({"output-dpi", "Output resolution for pages without settings. Default: from the profile.", "dpi"});
+  p.addOption({"margins-mm",
+               "Page layout (stage 5) for pages without settings: hard margins left,top,right,bottom in mm "
+               "(auto margins off). Needs stage 5 or 6 in the stage range. Default: from the profile.",
+               "L,T,R,B"});
+  p.addOption({"align",
+               "Page layout (stage 5) for pages without settings: outer-bottom puts left pages left+bottom and "
+               "right pages right+bottom. Left/right from page split; a single page by its position in the page "
+               "sequence (the first page is a recto: right for left-to-right, left for --rtl), alternating. "
+               "Needs stage 5 or 6 in the stage range. Default: from the profile.",
+               "outer-bottom"});
   p.addOption({"start-stage", "First stage to run (1-6). Default 1.", "n"});
   p.addOption({"end-stage", "Last stage to run (1-6). Default 6.", "n"});
   p.addOption({"source-dpi", "Resolution of the input images, overriding the files (images mode).", "dpi"});
@@ -182,6 +192,29 @@ int main(int argc, char* argv[]) {
   opt.pageFailed = [](const PageInfo& page, const QString& error) {
     std::cerr << "error: " << page.imageId().filePath().toStdString() << ": " << error.toStdString() << std::endl;
   };
+  // Page layout options (stage 5), for pages that get its default parameters in this run.
+  if (p.isSet("margins-mm")) {
+    const QStringList parts = p.value("margins-mm").split(',');
+    double mm[4] = {0, 0, 0, 0};
+    bool ok = (parts.size() == 4);
+    for (int i = 0; ok && i < 4; ++i) {
+      mm[i] = parts[i].trimmed().toDouble(&ok);
+      ok = ok && (mm[i] >= 0);
+    }
+    if (!ok) {
+      return fail("--margins-mm is four numbers >= 0: left,top,right,bottom");
+    }
+    opt.pageLayoutMarginsMm = Margins(mm[0], mm[1], mm[2], mm[3]);
+  }
+  if (p.isSet("align")) {
+    if (p.value("align") != "outer-bottom") {
+      return fail("--align is outer-bottom");
+    }
+    opt.alignOuterBottom = true;
+  }
+  if ((opt.pageLayoutMarginsMm || opt.alignOuterBottom) && opt.endFilter < 4) {
+    return fail("--margins-mm and --align need stage 5 (page layout) or 6 in the stage range");
+  }
   std::optional<bool> deskewFallback;
   if (p.isSet("deskew-fallback")) {
     const QString v = p.value("deskew-fallback");

@@ -16,6 +16,8 @@ class TestBatchQt : public QObject {
   void testAllStagesProduceOutput();
   void testManualSettingSurvives();
   void testTwoRunsAreIdentical();
+  void testOuterBottomLayout();
+  void testOuterBottomRightToLeft();
 
  private:
   QTemporaryDir m_dir;

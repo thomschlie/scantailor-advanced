@@ -44,6 +44,9 @@
 #include "ThumbnailPixmapCache.h"
 #include "filters/deskew/Filter.h"
 #include "filters/deskew/Settings.h"
+#include "filters/page_layout/Filter.h"
+#include "filters/page_layout/Params.h"
+#include "filters/page_layout/Settings.h"
 #include "filters/select_content/Filter.h"
 
 namespace {
@@ -175,6 +178,11 @@ int BatchProcessor::process(const Options& options) {
   std::atomic<int> failed{0};
   QMutex callbackMutex;
 
+  const bool pageLayoutOptions = options.pageLayoutMarginsMm || options.alignOuterBottom;
+  const std::shared_ptr<page_layout::Settings>& pageLayoutSettings = m_stages->pageLayoutFilter()->settings();
+  // Pages that got the page layout defaults in this run and still wait for the page layout options.
+  std::set<PageId> pageLayoutPending;
+
   for (int stage = options.startFilter; stage <= options.endFilter; ++stage) {
     // A run that starts at a stage enters it from nowhere (-1), so whatever lies above is propagated.
     enterStage(stage, (stage == options.startFilter) ? -1 : stage - 1);
@@ -183,7 +191,15 @@ int BatchProcessor::process(const Options& options) {
     // As MainWindow::startBatchProcessing: pages without settings get the default
     // parameters of every stage before their tasks are created.
     for (const PageInfo& page : pages) {
+      if (pageLayoutOptions && pageLayoutSettings->isParamsNull(page.id())) {
+        pageLayoutPending.insert(page.id());
+      }
       m_stages->loadDefaultSettings(page);
+    }
+    // --margins-mm / --align: once the page sequence is final (page split done), before "Margins".
+    if (pageLayoutOptions && stage >= m_stages->pageLayoutFilterIdx()) {
+      applyPageLayoutOptions(options, pageLayoutPending);
+      pageLayoutPending.clear();
     }
     // --include: the layout toggles of every page, set before "Select content" runs.
     if (stage == m_stages->selectContentFilterIdx() && options.layoutInclude >= 0) {
@@ -223,6 +239,49 @@ int BatchProcessor::process(const Options& options) {
     pool.waitForDone();
   }
   return failed.load();
+}
+
+void BatchProcessor::applyPageLayoutOptions(const Options& options, const std::set<PageId>& pageIds) const {
+  const std::shared_ptr<page_layout::Settings>& settings = m_stages->pageLayoutFilter()->settings();
+  const PageSequence pages = m_pages->toPageSequence(PAGE_VIEW);
+  const bool rightToLeft = (m_pages->layoutDirection() == Qt::RightToLeft);
+  size_t index = 0;
+  for (const PageInfo& page : pages) {
+    const size_t position = index++;
+    if (pageIds.count(page.id()) == 0) {
+      continue;  // has settings of its own (or vanished in page split)
+    }
+    const std::unique_ptr<page_layout::Params> params = settings->getPageParams(page.id());
+    if (!params) {
+      continue;
+    }
+    Margins margins = params->hardMarginsMM();
+    bool autoMargins = params->isAutoMarginsEnabled();
+    if (options.pageLayoutMarginsMm) {
+      margins = *options.pageLayoutMarginsMm;
+      autoMargins = false;
+    }
+    page_layout::Alignment alignment = params->alignment();
+    if (options.alignOuterBottom) {
+      bool left;
+      switch (page.id().subPage()) {
+        case PageId::LEFT_PAGE:
+          left = true;
+          break;
+        case PageId::RIGHT_PAGE:
+          left = false;
+          break;
+        default:
+          // Single page: the first one is a recto, then they alternate.
+          left = ((position % 2) == 0) == rightToLeft;
+          break;
+      }
+      alignment = page_layout::Alignment(page_layout::Alignment::BOTTOM,
+                                         left ? page_layout::Alignment::LEFT : page_layout::Alignment::RIGHT);
+    }
+    settings->setPageParams(page.id(), page_layout::Params(margins, params->pageRect(), params->contentRect(),
+                                                           params->contentSizeMM(), alignment, autoMargins));
+  }
 }
 
 void BatchProcessor::setDeskewFallback(const bool enabled) {

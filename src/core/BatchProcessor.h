@@ -10,12 +10,16 @@
 #include <functional>
 #include <iosfwd>
 #include <memory>
+#include <optional>
+#include <set>
 
 #include "CompositeTaskFactory.h"
+#include "Margins.h"
 #include "NonCopyable.h"
 #include "OutputFileNameGenerator.h"
 
 class FileNameDisambiguator;
+class PageId;
 class PageInfo;
 class ProjectPages;
 class ProjectReader;
@@ -47,6 +51,15 @@ class BatchProcessor {
     // Layout toggles (select_content::layout::IncludeFlag) set on every page before stage 4;
     // -1 = each page keeps its own.
     int layoutInclude = -1;
+    // Page layout (stage 5) for the pages that get its default parameters in this run; pages
+    // with settings (e.g. set by hand in the GUI) keep theirs. Applied in the first stage >= 5
+    // of the run, on the final page sequence.
+    // Hard margins in mm (auto margins off); none = from the profile.
+    std::optional<Margins> pageLayoutMarginsMm;
+    // Outer + bottom alignment: left pages left+bottom, right pages right+bottom. Left/right
+    // as page split gives them; a single page by its position in the page sequence (the first
+    // page is a recto: on the right for left-to-right books, on the left for right-to-left).
+    bool alignOuterBottom = false;
 
     // Progress callbacks, optional. They are never called concurrently,
     // but may be called from worker threads.
@@ -107,6 +120,8 @@ class BatchProcessor {
   void init(const QString& outputDir, const std::shared_ptr<FileNameDisambiguator>& disambiguator);
 
   void enterStage(int stage, int prevStage);
+
+  void applyPageLayoutOptions(const Options& options, const std::set<PageId>& pageIds) const;
 
   std::shared_ptr<ProjectPages> m_pages;
   std::shared_ptr<StageSequence> m_stages;
