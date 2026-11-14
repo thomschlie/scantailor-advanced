@@ -4,6 +4,7 @@ set(common_ui_files
 set(common_sources
     Application.cpp Application.h
     BackgroundExecutor.cpp BackgroundExecutor.h
+    BatchProcessor.cpp BatchProcessor.h
     PixmapRenderer.cpp PixmapRenderer.h
     BubbleAnimation.cpp BubbleAnimation.h
     ProcessingIndicationWidget.cpp ProcessingIndicationWidget.h
