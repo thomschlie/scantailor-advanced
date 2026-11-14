@@ -74,6 +74,7 @@ st_set_default_build_type(Release)
 
 # Must be set before Boost (Flatpak and other chroot builds use -DBUILD_TESTS=OFF; issue #61).
 option(BUILD_TESTS "Build unit tests (math_tests, imageproc_tests, core_tests, foundation_tests, qt_tests)" ON)
+option(BUILD_CLI "Build scantailor-cli, the command-line interface for batch processing" ON)
 
 if (NOT CMAKE_RUNTIME_OUTPUT_DIRECTORY)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
