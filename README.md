@@ -122,9 +122,8 @@ Stages are numbered as in the GUI: 1 fix orientation, 2 split pages, 3 deskew, 4
 others are processed and the project is saved); `2` error before or after processing (bad
 options, unreadable images or project, project file not writable).
 
-**No display needed:** the CLI uses Qt's `offscreen` platform plugin unless `QT_QPA_PLATFORM` is
-set. It is part of Qt's base package on most systems; if it is missing, `scantailor-cli` says so
-and stops (set `QT_QPA_PLATFORM` to another available platform, e.g. `xcb`, as a workaround).
+**No display needed:** the CLI needs no window system and no Qt platform plugin.
+It works on servers, in containers, in CI and in Windows scheduled tasks.
 
 **Flatpak:** `flatpak run --command=scantailor-cli org.scantailor.Advanced [options]`.
 

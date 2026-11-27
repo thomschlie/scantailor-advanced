@@ -31,7 +31,7 @@ class ThumbnailPixmapCache;
  * changes as in the GUI. Pages that already have settings (e.g. set by hand in the GUI)
  * keep them.
  *
- * Needs a QApplication (the filters own their option widgets); no window is shown.
+ * Works on a QCoreApplication: without a QApplication, the filters make no option widgets.
  */
 class BatchProcessor {
   DECLARE_NON_COPYABLE(BatchProcessor)

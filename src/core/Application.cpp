@@ -82,16 +82,25 @@ void Application::initTranslations() {
 }
 
 void Application::initPortableVersion() {
+  m_portableConfigPath = findPortableConfigPath();
+}
+
+QString Application::findPortableConfigPath() {
   const QString portableConfigDirName = QString::fromUtf8(PORTABLE_CONFIG_DIR);
   if (portableConfigDirName.isEmpty()) {
-    return;
+    return QString();
   }
 
-  const QDir portableConfigPath(applicationDirPath() + '/' + portableConfigDirName);
+  const QDir portableConfigPath(QCoreApplication::applicationDirPath() + '/' + portableConfigDirName);
   if ((portableConfigPath.exists() && QTemporaryDir(portableConfigPath.absolutePath()).isValid())
       || (!portableConfigPath.exists() && portableConfigPath.mkpath("."))) {
-    m_portableConfigPath = portableConfigPath.absolutePath();
+    return portableConfigPath.absolutePath();
   }
+  return QString();
+}
+
+bool Application::hasWidgets() {
+  return qobject_cast<QApplication*>(QCoreApplication::instance()) != nullptr;
 }
 
 void Application::loadFonts() {

@@ -16,6 +16,7 @@
 #include <core/DefaultParamsProvider.h>
 
 #include <QCommandLineParser>
+#include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QSettings>
@@ -55,45 +56,26 @@ bool parseStage(const QCommandLineParser& parser, const QString& name, const int
   return true;
 }
 
-// Qt aborts (qFatal) when the platform plugin cannot be loaded, with a message aimed at GUI
-// users. While the application object is being created, turn that into a clear error.
-QtMessageHandler previousMessageHandler = nullptr;
-
-void platformPluginMessageHandler(const QtMsgType type, const QMessageLogContext& context, const QString& msg) {
-  if (type == QtFatalMsg) {
-    const QByteArray platform = qgetenv("QT_QPA_PLATFORM");
-    std::cerr << "scantailor-cli: cannot load the Qt platform plugin \"" << platform.constData() << "\".\n"
-              << "scantailor-cli needs no display, but it needs a Qt platform plugin: by default \"offscreen\"\n"
-              << "(part of Qt's base package), or the one QT_QPA_PLATFORM names (e.g. xcb, wayland).\n"
-              << "Qt said: " << msg.toStdString() << std::endl;
-    std::_Exit(kExitError);
-  }
-  if (previousMessageHandler) {
-    previousMessageHandler(type, context, msg);
-  }
-}
 }  // namespace
 
 int main(int argc, char* argv[]) {
-  // No window system needed: default to the offscreen platform unless the caller chose one.
-  if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
-    qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
-  }
-  previousMessageHandler = qInstallMessageHandler(platformPluginMessageHandler);
-  Application app(argc, argv);
-  qInstallMessageHandler(previousMessageHandler);
+  // A QCoreApplication needs no Qt platform plugin and no display; without a QApplication the filters make no widgets.
+  QCoreApplication app(argc, argv);
+  // Without a console, QCommandLineParser on Windows shows help and errors in a message box that blocks scripts.
+  qputenv("QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES", "1");
 
 #ifdef _WIN32
   // As the GUI: get rid of all references to Qt's installation directory.
-  Application::setLibraryPaths(QStringList(Application::applicationDirPath()));
+  QCoreApplication::setLibraryPaths(QStringList(QCoreApplication::applicationDirPath()));
 #endif
 
   // Same names and settings format as the GUI, so profiles and settings are shared.
-  Application::setApplicationName(APPLICATION_NAME);
-  Application::setOrganizationName(ORGANIZATION_NAME);
+  QCoreApplication::setApplicationName(APPLICATION_NAME);
+  QCoreApplication::setOrganizationName(ORGANIZATION_NAME);
   QSettings::setDefaultFormat(QSettings::IniFormat);
-  if (app.isPortableVersion()) {
-    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, app.getPortableConfigPath());
+  const QString portableConfigPath = Application::findPortableConfigPath();
+  if (!portableConfigPath.isNull()) {
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, portableConfigPath);
   }
 
   QCommandLineParser p;
@@ -102,7 +84,7 @@ int main(int argc, char* argv[]) {
       "Stages: 1 fix orientation, 2 split pages, 3 deskew, 4 select content, 5 margins, 6 output.\n"
       "Pages that already have settings in a project (e.g. fixed by hand in the GUI) keep them;\n"
       "the default parameters apply only to pages without settings.\n"
-      "No display is needed: Qt's \"offscreen\" platform plugin is used unless QT_QPA_PLATFORM is set.\n"
+      "No display and no Qt platform plugin are needed.\n"
       "Exit status: 0 all pages processed, 1 some pages failed, 2 error (options, input, project file).");
   p.addHelpOption();
   p.addPositionalArgument("images", "Input images (new project). Not with --project.", "[image...]");
@@ -128,7 +110,13 @@ int main(int argc, char* argv[]) {
   p.addOption({"rtl", "Right-to-left page order (images mode)."});
   p.addOption({{"j", "threads"}, "Parallel pages per stage. Default: number of CPUs.", "n"});
   p.addOption({{"v", "verbose"}, "Print stages and pages."});
-  p.process(app);
+  // QCommandLineParser::process() exits with status 1 on a bad option, but 1 means that pages failed.
+  if (!p.parse(app.arguments())) {
+    return fail(p.errorText() + " (see --help)");
+  }
+  if (p.isSet("help") || p.isSet("help-all")) {
+    p.process(app);
+  }
 
   const QStringList images = p.positionalArguments();
   const QString project = p.value("project");

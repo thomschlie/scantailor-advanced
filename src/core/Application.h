@@ -25,6 +25,12 @@ class Application : public QApplication {
 
   const QString& getPortableConfigPath() const;
 
+  // False in scantailor-cli: it runs on a QCoreApplication, which cannot make widgets.
+  static bool hasWidgets();
+
+  // Static, because scantailor-cli has no Application object.
+  static QString findPortableConfigPath();
+
  private:
   void initTranslations();
 

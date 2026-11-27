@@ -10,8 +10,7 @@
 #include <QtTest/QtTest>
 
 int main(int argc, char* argv[]) {
-  // ScanTailor's Application, not a plain QApplication: DefaultParamsProfileManager (reached from
-  // the filters through DefaultParamsProvider) casts qApp to it.
+  // ScanTailor's Application, as in the GUI: the tests use the option widgets and the portable config of the GUI.
   Application app(argc, argv);
   int status = 0;
 

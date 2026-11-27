@@ -7,6 +7,7 @@
 
 #include <utility>
 
+#include "Application.h"
 #include "CacheDrivenTask.h"
 #include "FilterUiInterface.h"
 #include "OptionsWidget.h"
@@ -20,7 +21,10 @@
 namespace output {
 Filter::Filter(const PageSelectionAccessor& pageSelectionAccessor)
     : m_settings(std::make_shared<Settings>()), m_selectedPageOrder(0) {
-  m_optionsWidget.reset(new OptionsWidget(m_settings, pageSelectionAccessor));
+  // scantailor-cli has no widgets; the batch tasks do not use the options widget.
+  if (Application::hasWidgets()) {
+    m_optionsWidget.reset(new OptionsWidget(m_settings, pageSelectionAccessor));
+  }
 
   const PageOrderOption::ProviderPtr defaultOrder;
   const auto orderByCompleteness = std::make_shared<OrderByCompletenessProvider>();

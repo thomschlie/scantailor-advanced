@@ -8,6 +8,7 @@
 
 #include <utility>
 
+#include "Application.h"
 #include "CacheDrivenTask.h"
 #include "FilterUiInterface.h"
 #include "OptionsWidget.h"
@@ -22,7 +23,10 @@
 namespace page_split {
 Filter::Filter(std::shared_ptr<ProjectPages> pageSequence, const PageSelectionAccessor& pageSelectionAccessor)
     : m_pages(std::move(pageSequence)), m_settings(std::make_shared<Settings>()), m_selectedPageOrder(0) {
-  m_optionsWidget.reset(new OptionsWidget(m_settings, m_pages, pageSelectionAccessor));
+  // scantailor-cli has no widgets; the batch tasks do not use the options widget.
+  if (Application::hasWidgets()) {
+    m_optionsWidget.reset(new OptionsWidget(m_settings, m_pages, pageSelectionAccessor));
+  }
 
   const PageOrderOption::ProviderPtr defaultOrder;
   const auto orderBySplitType = std::make_shared<OrderBySplitTypeProvider>(m_settings);

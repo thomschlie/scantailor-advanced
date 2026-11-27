@@ -103,4 +103,13 @@ if (BUILD_CLI)
       PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"
       "$<TARGET_PROPERTY:TIFF::TIFF,INTERFACE_INCLUDE_DIRECTORIES>")
   install(TARGETS scantailor-cli RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+
+  if (BUILD_TESTS)
+    add_test(NAME cli_smoke
+             COMMAND "${CMAKE_COMMAND}" "-DCLI=$<TARGET_FILE:scantailor-cli>"
+                     "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_smoke"
+                     "-DPAGE=${CMAKE_CURRENT_SOURCE_DIR}/cli_smoke_page.png" -P "${CMAKE_SOURCE_DIR}/cmake/CliSmokeTest.cmake")
+    # A plugin that does not exist: the CLI runs on a QCoreApplication and must not load one.
+    set_tests_properties(cli_smoke PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=no-such-plugin)
+  endif()
 endif()

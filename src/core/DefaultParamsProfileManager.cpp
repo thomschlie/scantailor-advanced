@@ -17,9 +17,11 @@ using namespace output;
 using namespace page_layout;
 
 DefaultParamsProfileManager::DefaultParamsProfileManager() {
-  auto* app = static_cast<Application*>(qApp);
-  if (app->isPortableVersion()) {
-    m_path = app->getPortableConfigPath() + "/profiles";
+  // scantailor-cli has no Application object, so it finds the portable config directory itself.
+  const auto* app = qobject_cast<Application*>(QCoreApplication::instance());
+  const QString portableConfigPath = app ? app->getPortableConfigPath() : Application::findPortableConfigPath();
+  if (!portableConfigPath.isNull()) {
+    m_path = portableConfigPath + "/profiles";
   } else {
     m_path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/profiles";
   }
